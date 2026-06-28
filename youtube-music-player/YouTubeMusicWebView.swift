@@ -81,24 +81,31 @@ struct YouTubeMusicWebView: NSViewRepresentable {
                 let lastTitle = '';
                 let lastPlayState = null;
 
+                // Pick the largest artwork entry from a MediaMetadata.artwork list.
+                function pickArtwork(md) {
+                    if (!md || !md.artwork || !md.artwork.length) return '';
+                    let best = md.artwork[0], bestArea = -1;
+                    for (const a of md.artwork) {
+                        const m = (a.sizes || '').match(/(\d+)x(\d+)/);
+                        const area = m ? parseInt(m[1], 10) * parseInt(m[2], 10) : 0;
+                        if (area >= bestArea) { bestArea = area; best = a; }
+                    }
+                    let src = best.src || '';
+                    // googleusercontent URLs accept a size suffix; upscale if present.
+                    if (src) src = src.replace(/=w\d+-h\d+-.*$/, '=w544-h544-l90-rj');
+                    return src;
+                }
+
                 function sendTrackInfo() {
-                    const titleEl = document.querySelector('.title.ytmusic-player-bar, .title.style-scope.ytmusic-player-bar');
-                    const artistEl = document.querySelector('.byline.ytmusic-player-bar a, .subtitle .byline a');
-                    const imgEl = document.querySelector('.image.ytmusic-player-bar img, img.image.style-scope.ytmusic-player-bar');
+                    // Read from the Media Session API, which YT Music populates. This
+                    // is far more stable than scraping player-bar CSS classes.
+                    const md = navigator.mediaSession && navigator.mediaSession.metadata;
                     const video = document.querySelector('video');
 
-                    const title = titleEl?.textContent?.trim() || '';
-                    const artist = artistEl?.textContent?.trim() || '';
+                    const title = md?.title?.trim() || '';
+                    const artist = md?.artist?.trim() || '';
+                    const artwork = pickArtwork(md);
                     const isPlaying = video ? !video.paused : false;
-
-                    // Get larger artwork
-                    let artwork = imgEl?.src || '';
-                    if (artwork) {
-                        artwork = artwork.replace(/=w\d+-h\d+-.*$/, '=w500-h500-l90-rj');
-                        if (!artwork.includes('=w500')) {
-                            artwork = artwork.replace(/=s\d+/, '=s500');
-                        }
-                    }
 
                     // Send track info when title changes
                     if (title && title !== lastTitle) {
