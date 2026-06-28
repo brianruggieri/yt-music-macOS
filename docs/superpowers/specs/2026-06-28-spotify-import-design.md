@@ -89,7 +89,9 @@ Swift — no JavaScript in the import hot path.
      JS read (the only JS in this feature — a read, not the hot path), so they
      stay in sync with what the server expects rather than being hardcoded.
    - Calls `youtubei/v1` via `URLSession`: `search`, `playlist/create`,
-     `browse/edit_playlist` (add items).
+     `browse/edit_playlist` (add items), and `playlist/delete` (used **only** by
+     the write-path auth diagnostic to clean up its throwaway playlist; the
+     import flow itself never deletes).
    - Ported from the `ytmusicapi` reference implementation (`helpers.py`).
    - Output: search candidates, created playlist id, per-add success/failure.
    - **Risk:** without the full header/context/visitor set, `search` may work
