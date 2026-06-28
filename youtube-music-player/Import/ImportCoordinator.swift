@@ -235,6 +235,10 @@ final class ImportCoordinator: ObservableObject {
                     report.skipped += 1
                     continue
                 }
+                // ponytail: Matcher guarantees chosen != nil for .high — assert so a future
+                // Matcher change can't silently drop auto-accepted tracks into report.skipped.
+                assert(match.confidence != .high || match.chosen != nil,
+                       "high-confidence match must have chosen set")
                 if let chosen = match.chosen {
                     videoIDs.append(chosen.videoId)
                 } else {
