@@ -26,6 +26,8 @@ enum TextNormalize {
 		// Noise = metadata that doesn't denote a different artistic version.
 		// NOT stripped: live, acoustic, demo, remix, radio edit, extended, single version,
 		//               instrumental, karaoke, cover, session, version.
+		// NOTE: "live" is a VERSION MARKER — both "(Live)" and "- Live" forms are intentionally
+		//       preserved so a live recording never wrong-matches a studio version.
 		// ponytail: keyword list covers known noise; add here if new noise patterns emerge
 		let noiseKw = "remaster(?:ed)?|reissue|anniversary|edition|explicit|clean|mono|stereo|feat|ft|original\\s+mix|bonus\\s+track|deluxe"
 		var result = s
@@ -33,11 +35,10 @@ enum TextNormalize {
 			"(?i)\\s*\\((?=[^)]*\\b(?:\(noiseKw))\\b)[^)]*\\)",    // (...) containing noise keyword
 			"(?i)\\s*\\[(?=[^\\]]*\\b(?:\(noiseKw))\\b)[^\\]]*\\]", // [...] containing noise keyword
 			"(?i)\\s*-\\s*remaster\\w*", // "- remaster" / "- remastered"
-			"(?i)\\s*-\\s*live\\b",      // "- live"
 			"(?i)\\s*feat\\.?\\s+[^,]*", // "feat. ..." at end
 		]
 		for pattern in patterns {
-			if let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) {
+			if let regex = try? NSRegularExpression(pattern: pattern, options: []) { // (?i) inline; .caseInsensitive redundant
 				let range = NSRange(result.startIndex..., in: result)
 				result = regex.stringByReplacingMatches(in: result, range: range, withTemplate: "")
 			}
