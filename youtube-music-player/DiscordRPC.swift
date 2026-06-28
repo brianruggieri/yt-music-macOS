@@ -7,6 +7,11 @@ class DiscordRPC {
     private var socket: Int32 = -1
     private var isConnected = false
 
+    // Track identity + start time so the Discord "elapsed" timestamp stays stable
+    // for the current song instead of resetting on every updatePresence call.
+    private var lastTrackKey = ""
+    private var trackStartMs = 0
+
     init() {
         connect()
     }
@@ -22,19 +27,9 @@ class DiscordRPC {
 
         var socketPaths = ["/tmp/discord-ipc-0", "/var/tmp/discord-ipc-0"]
 
-        let fileManager = FileManager.default
-        if let enumerator = fileManager.enumerator(atPath: "/var/folders") {
-            while let path = enumerator.nextObject() as? String {
-                if path.hasSuffix("discord-ipc-0") {
-                    socketPaths.insert("/var/folders/\(path)", at: 0)
-                    break
-                }
-                if path.components(separatedBy: "/").count > 4 {
-                    enumerator.skipDescendants()
-                }
-            }
-        }
-
+        // The Discord socket normally lives in the Darwin per-user temp dir, which
+        // confstr returns directly. The old fallback crawled all of /var/folders
+        // on the main thread to find it — slow and pointless given this lookup.
         var buffer = [CChar](repeating: 0, count: 1024)
         confstr(_CS_DARWIN_USER_TEMP_DIR, &buffer, buffer.count)
         let darwinTmp = String(cString: buffer)
@@ -45,6 +40,12 @@ class DiscordRPC {
         for path in socketPaths {
             socket = Darwin.socket(AF_UNIX, SOCK_STREAM, 0)
             if socket < 0 { continue }
+
+            // Without SO_NOSIGPIPE, writing to a socket Discord has closed raises
+            // SIGPIPE, which by default kills the whole app before send()'s return
+            // value can be inspected. Suppress it so writes fail with EPIPE instead.
+            var nosigpipe: Int32 = 1
+            setsockopt(socket, SOL_SOCKET, SO_NOSIGPIPE, &nosigpipe, socklen_t(MemoryLayout<Int32>.size))
 
             var addr = sockaddr_un()
             addr.sun_family = sa_family_t(AF_UNIX)
@@ -112,11 +113,19 @@ class DiscordRPC {
             assets["large_text"] = title
         }
 
+        // Only reset the start timestamp when the track actually changes; otherwise
+        // re-sending presence (play/pause, poller) would keep restarting elapsed.
+        let trackKey = "\(title)\u{0}\(artist)"
+        if trackKey != lastTrackKey {
+            lastTrackKey = trackKey
+            trackStartMs = Int(Date().timeIntervalSince1970 * 1000)
+        }
+
         let activity: [String: Any] = [
             "details": title,
             "state": "by \(artist)",
             "timestamps": [
-                "start": Int(Date().timeIntervalSince1970 * 1000)
+                "start": trackStartMs
             ],
             "assets": assets
         ]
@@ -135,6 +144,11 @@ class DiscordRPC {
 
     func clearPresence() {
         guard isConnected else { return }
+
+        // Forget the current track so resuming it later recomputes a fresh start
+        // time instead of showing elapsed time accrued across the stopped interval.
+        lastTrackKey = ""
+        trackStartMs = 0
 
         let payload: [String: Any] = [
             "cmd": "SET_ACTIVITY",
@@ -169,7 +183,22 @@ class DiscordRPC {
         var message = header
         message.append(contentsOf: jsonData)
 
-        Darwin.send(socket, message, message.count, 0)
+        // send() on a stream socket may write fewer bytes than requested; a partial
+        // write would leave Discord with a truncated, misframed IPC packet. Loop until
+        // the whole frame is out, and tear down on any error so the next
+        // updatePresence reconnects instead of writing to a dead fd forever.
+        var total = 0
+        message.withUnsafeBytes { raw in
+            guard let base = raw.baseAddress else { return }
+            while total < message.count {
+                let n = Darwin.send(socket, base + total, message.count - total, 0)
+                if n <= 0 {
+                    disconnect()
+                    return
+                }
+                total += n
+            }
+        }
     }
 
     func disconnect() {
