@@ -28,12 +28,7 @@ struct ContentView: View {
     }
 
     private func setupDiscordPresence() {
-        let existingCallback = webViewModel.onTrackChange
-
-        webViewModel.onTrackChange = { title, artist, artworkUrl, isPlaying in
-            // Call existing callback (for Now Playing)
-            existingCallback?(title, artist, artworkUrl, isPlaying)
-
+        webViewModel.addTrackChangeObserver { title, artist, artworkUrl, isPlaying in
             // Update Discord presence
             if let title = title, let artist = artist, isPlaying {
                 discordRPC.updatePresence(

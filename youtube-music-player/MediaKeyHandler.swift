@@ -15,7 +15,7 @@ class MediaKeyHandler {
 
     func setViewModel(_ viewModel: YouTubeMusicViewModel) {
         self.viewModel = viewModel
-        viewModel.onTrackChange = { [weak self] title, artist, artworkUrl, isPlaying in
+        viewModel.addTrackChangeObserver { [weak self] title, artist, artworkUrl, isPlaying in
             self?.updateNowPlaying(title: title, artist: artist, artworkUrl: artworkUrl, isPlaying: isPlaying)
         }
     }
