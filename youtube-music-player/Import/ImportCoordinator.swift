@@ -54,6 +54,8 @@ final class ImportCoordinator: ObservableObject {
     private var importSources: [(label: String, tracks: [SpotifyTrack])] = []
     // ponytail: main-actor bool; cancel() sets it, async methods check between I/O units
     private var cancelled = false
+    // ponytail: generation counter — bumped on new run or reset; stale in-flight tasks bail on mismatch
+    private var runGeneration = 0
     /// Cached YTM client — warm after startMatching(); reused by search() and confirmAndImport().
     private var cachedYTClient: YTMusicClient?
 
@@ -62,7 +64,8 @@ final class ImportCoordinator: ObservableObject {
     /// Resets to a clean starting state each time the import sheet is (re-)presented.
     /// Optimistically sets isYTMusicSignedIn=true; startMatching() re-gates if the session is missing.
     func resetForPresentation() {
-        phase = spotifyAuth.isConnected ? .pickSources : .connect
+        runGeneration += 1          // Bump first — any in-flight task sees a stale gen and bails
+        cancelled = false
         isYTMusicSignedIn = true
         needsReview = []
         report = ImportReport()
@@ -70,10 +73,16 @@ final class ImportCoordinator: ObservableObject {
         progress = 0
         autoAcceptedCount = 0
         selectedPlaylistIDs = []
+        includeLiked = false
         allMatches = [:]
         importSources = []
-        cancelled = false
         cachedYTClient = nil
+        if spotifyAuth.isConnected {
+            phase = .pickSources
+            Task { await loadSources() }  // reload playlists; sets phase = .pickSources on success
+        } else {
+            phase = .connect
+        }
     }
 
     /// Opens Spotify OAuth. Moves to .pickSources on success.
@@ -106,6 +115,8 @@ final class ImportCoordinator: ObservableObject {
             return
         }
 
+        runGeneration += 1
+        let gen = runGeneration
         cancelled = false
         phase = .matching
         progress = 0
@@ -120,15 +131,18 @@ final class ImportCoordinator: ObservableObject {
         let ytClient: YTMusicClient
         do {
             let session = try await ytMusicAuth.snapshot()
+            guard gen == runGeneration else { return }
             ytClient = YTMusicClient(session: session)
             cachedYTClient = ytClient
             isYTMusicSignedIn = true
         } catch YTMusicAuthError.notSignedIn {
+            guard gen == runGeneration else { return }
             isYTMusicSignedIn = false
             errorMessage = "Sign in to YouTube Music first."
             phase = .connect
             return
         } catch {
+            guard gen == runGeneration else { return }
             errorMessage = error.localizedDescription
             phase = .connect
             return
@@ -139,22 +153,32 @@ final class ImportCoordinator: ObservableObject {
         var sources: [(label: String, tracks: [SpotifyTrack])] = []
         let selectedPlaylists = playlists.filter { selectedPlaylistIDs.contains($0.id) }
         for playlist in selectedPlaylists {
-            guard !cancelled else { break }
+            guard !cancelled, gen == runGeneration else { break }
             do {
                 let tracks = try await spotifyClient.tracks(playlistID: playlist.id)
-                sources.append((playlist.name, tracks))
+                if gen == runGeneration {
+                    sources.append((playlist.name, tracks))
+                }
             } catch {
-                errorMessage = "Couldn't load \"\(playlist.name)\": \(error.localizedDescription)"
+                if gen == runGeneration {
+                    errorMessage = "Couldn't load \"\(playlist.name)\": \(error.localizedDescription)"
+                }
             }
         }
-        if includeLiked, !cancelled {
+        if includeLiked, !cancelled, gen == runGeneration {
             do {
-                sources.append(("Spotify Liked Songs", try await spotifyClient.likedSongs()))
+                let liked = try await spotifyClient.likedSongs()
+                if gen == runGeneration {
+                    sources.append(("Spotify Liked Songs", liked))
+                }
             } catch {
-                errorMessage = "Couldn't load liked songs: \(error.localizedDescription)"
+                if gen == runGeneration {
+                    errorMessage = "Couldn't load liked songs: \(error.localizedDescription)"
+                }
             }
         }
 
+        guard gen == runGeneration else { return }
         importSources = sources
 
         // Deduplicate tracks across sources (same track may appear in multiple playlists)
@@ -183,11 +207,12 @@ final class ImportCoordinator: ObservableObject {
 
             // Seed up to 4
             for _ in 0..<4 {
-                guard !cancelled, let track = iter.next() else { break }
+                guard !cancelled, gen == runGeneration, let track = iter.next() else { break }
                 group.addTask { await searchAndMatch(track: track, client: ytClient) }
             }
 
             for await result in group {
+                guard gen == runGeneration else { return }
                 completed += 1
                 progress = Double(completed) / Double(total)
                 allMatches[result.track.id] = result
@@ -199,8 +224,8 @@ final class ImportCoordinator: ObservableObject {
                     needsReview.append(result)
                 }
 
-                // Add next task only if not cancelled
-                if !cancelled, let next = iter.next() {
+                // Add next task only if not cancelled and not superseded
+                if !cancelled, gen == runGeneration, let next = iter.next() {
                     group.addTask { await searchAndMatch(track: next, client: ytClient) }
                 }
             }
@@ -209,12 +234,15 @@ final class ImportCoordinator: ObservableObject {
         // Always transition to .review — partial needsReview is preserved and the
         // user can proceed or re-run. Leaving phase == .matching on cancel would
         // strand the UI on the progress screen with no exit.
+        guard gen == runGeneration else { return }
         phase = .review
     }
 
     /// Call after the user has resolved `needsReview` items.
     /// Creates one YTM playlist per source, adds matched tracks.
     func confirmAndImport() async {
+        runGeneration += 1
+        let gen = runGeneration
         cancelled = false
         phase = .importing
         report = ImportReport()
@@ -226,22 +254,25 @@ final class ImportCoordinator: ObservableObject {
         let ytClient: YTMusicClient
         do {
             let session = try await ytMusicAuth.snapshot()
+            guard gen == runGeneration else { return }
             ytClient = YTMusicClient(session: session)
             cachedYTClient = ytClient
             isYTMusicSignedIn = true
         } catch YTMusicAuthError.notSignedIn {
+            guard gen == runGeneration else { return }
             isYTMusicSignedIn = false
             errorMessage = "Sign in to YouTube Music to continue."
             phase = .review
             return
         } catch {
+            guard gen == runGeneration else { return }
             errorMessage = error.localizedDescription
             phase = .review
             return
         }
 
         for source in importSources {
-            guard !cancelled else { break }
+            guard !cancelled, gen == runGeneration else { break }
 
             // Collect video IDs first; nil chosen = user skipped.
             // ponytail: Matcher guarantees chosen != nil for .high — assert so a future
@@ -276,6 +307,7 @@ final class ImportCoordinator: ObservableObject {
                     try await ytClient.createPlaylist(title: source.label, privacy: "PRIVATE")
                 }
             } catch {
+                guard gen == runGeneration else { break }
                 report.failed.append(ImportFailure(
                     track: nil,
                     reason: "Create \"\(source.label)\": \(error.localizedDescription)"))
@@ -287,13 +319,14 @@ final class ImportCoordinator: ObservableObject {
             let batchSize = 25
             var offset = 0
             while offset < videoIDs.count {
-                guard !cancelled else { break }
+                guard !cancelled, gen == runGeneration else { break }
                 let batch = Array(videoIDs[offset..<min(offset + batchSize, videoIDs.count)])
                 offset += batchSize
                 do {
                     let (added, failed) = try await withRetry {
                         try await ytClient.addItems(playlistID: playlistID, videoIDs: batch)
                     }
+                    guard gen == runGeneration else { break }
                     report.imported += added.count
                     for vid in failed {
                         report.failed.append(ImportFailure(
@@ -301,6 +334,7 @@ final class ImportCoordinator: ObservableObject {
                             reason: "\(vid) failed in \"\(source.label)\""))
                     }
                 } catch {
+                    guard gen == runGeneration else { break }
                     report.failed.append(ImportFailure(
                         track: nil,
                         reason: "Batch add to \"\(source.label)\": \(error.localizedDescription)"))
@@ -310,6 +344,7 @@ final class ImportCoordinator: ObservableObject {
 
         // Always transition to .done — partial report is preserved and displayed.
         // Leaving phase == .importing on cancel would strand the UI on the progress screen.
+        guard gen == runGeneration else { return }
         phase = .done
     }
 
