@@ -50,7 +50,7 @@ struct DoneView: View {
 					if !coordinator.report.failed.isEmpty {
 						DisclosureGroup(isExpanded: $isExpanded) {
 							VStack(alignment: .leading, spacing: 0) {
-								ForEach(Array(coordinator.report.failed.enumerated()), id: \.offset) { idx, failure in
+								ForEach(coordinator.report.failed) { failure in
 									HStack(alignment: .top, spacing: 8) {
 										Image(systemName: "xmark.circle.fill")
 											.font(.caption)
@@ -74,7 +74,7 @@ struct DoneView: View {
 										Spacer()
 									}
 									.padding(.vertical, 6)
-									if idx < coordinator.report.failed.count - 1 {
+									if coordinator.report.failed.last?.id != failure.id {
 										Divider()
 									}
 								}

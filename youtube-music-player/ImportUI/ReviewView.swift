@@ -40,7 +40,7 @@ struct ReviewView: View {
 			} else {
 				List {
 					ForEach($coordinator.needsReview) { $result in
-						ReviewRow(result: $result)
+						ReviewRow(result: $result, coordinator: coordinator)
 							.listRowBackground(Color.ytSurf.opacity(0.5))
 							.listRowSeparator(.visible)
 					}
@@ -93,11 +93,12 @@ struct ReviewView: View {
 
 private struct ReviewRow: View {
 	@Binding var result: MatchResult
+	let coordinator: ImportCoordinator
 	@State private var isSearching = false
 	@State private var searchText = ""
+	@State private var isYTMSearching = false
 
-	/// Client-side filter over the candidates already loaded for this track.
-	/// ponytail: live YTM search would need a coordinator.search() method — see task-10-report.md
+	/// Client-side filter over candidates; live YTM search replaces candidates on submit.
 	private var filteredCandidates: [YTMCandidate] {
 		guard !searchText.isEmpty else { return result.candidates }
 		let q = searchText.lowercased()
@@ -201,11 +202,14 @@ private struct ReviewRow: View {
 				Divider()
 			}
 
-			// Toggle inline candidate filter
+			// Toggle inline candidate search/filter panel
 			Button {
 				withAnimation(.easeInOut(duration: 0.18)) { isSearching.toggle() }
 			} label: {
-				Label(isSearching ? "Hide filter" : "Filter candidates…", systemImage: "magnifyingglass")
+				Label(
+					isSearching ? "Hide search" : (result.candidates.isEmpty ? "Search YouTube Music…" : "Filter candidates…"),
+					systemImage: "magnifyingglass"
+				)
 			}
 
 			Divider()
@@ -232,17 +236,35 @@ private struct ReviewRow: View {
 				Image(systemName: "magnifyingglass")
 					.font(.caption)
 					.foregroundStyle(.secondary)
-				TextField("Filter candidates…", text: $searchText)
+				TextField(result.candidates.isEmpty ? "Search YouTube Music…" : "Filter candidates…", text: $searchText)
 					.font(.caption)
 					.textFieldStyle(.plain)
+					.onSubmit {
+						guard !searchText.isEmpty else { return }
+						let query = searchText
+						Task {
+							isYTMSearching = true
+							let hits = await coordinator.search(query)
+							result.candidates = hits
+							searchText = ""
+							isYTMSearching = false
+						}
+					}
+				if isYTMSearching {
+					ProgressView()
+						.controlSize(.small)
+						.scaleEffect(0.8)
+				}
 			}
 			.padding(7)
 			.background(Color.ytBg)
 			.clipShape(RoundedRectangle(cornerRadius: 7))
 
-			if result.candidates.isEmpty {
-				Text("No candidates were found for this track")
-					.font(.caption)
+			if isYTMSearching {
+				// progress shown inline above
+			} else if result.candidates.isEmpty {
+				Text("Type a query and press Return to search YouTube Music")
+					.font(.caption2)
 					.foregroundStyle(.tertiary)
 					.padding(.horizontal, 4)
 			} else if filteredCandidates.isEmpty {
@@ -283,6 +305,12 @@ private struct ReviewRow: View {
 						.clipShape(RoundedRectangle(cornerRadius: 6))
 					}
 					.buttonStyle(.plain)
+				}
+				if filteredCandidates.count > 4 {
+					Text("… and \(filteredCandidates.count - 4) more")
+						.font(.caption2)
+						.foregroundStyle(.tertiary)
+						.padding(.horizontal, 4)
 				}
 			}
 		}

@@ -54,6 +54,8 @@ final class ImportCoordinator: ObservableObject {
     private var importSources: [(label: String, tracks: [SpotifyTrack])] = []
     // ponytail: main-actor bool; cancel() sets it, async methods check between I/O units
     private var cancelled = false
+    /// Cached YTM client — warm after startMatching(); reused by search() and confirmAndImport().
+    private var cachedYTClient: YTMusicClient?
 
     // MARK: - Public Methods
 
@@ -95,12 +97,14 @@ final class ImportCoordinator: ObservableObject {
         allMatches = [:]
         importSources = []
         errorMessage = nil
+        cachedYTClient = nil
 
         // Acquire YTM session — fail fast if not signed in
         let ytClient: YTMusicClient
         do {
             let session = try await ytMusicAuth.snapshot()
             ytClient = YTMusicClient(session: session)
+            cachedYTClient = ytClient
             isYTMusicSignedIn = true
         } catch YTMusicAuthError.notSignedIn {
             isYTMusicSignedIn = false
@@ -201,6 +205,7 @@ final class ImportCoordinator: ObservableObject {
         do {
             let session = try await ytMusicAuth.snapshot()
             ytClient = YTMusicClient(session: session)
+            cachedYTClient = ytClient
             isYTMusicSignedIn = true
         } catch YTMusicAuthError.notSignedIn {
             isYTMusicSignedIn = false
@@ -275,6 +280,17 @@ final class ImportCoordinator: ObservableObject {
         if !cancelled { phase = .done }
     }
 
+    /// Searches YouTube Music for `query`. Never throws — returns [] on failure.
+    /// Reuses the cached YTM client from startMatching(); snapshots a fresh session if not available.
+    func search(_ query: String) async -> [YTMCandidate] {
+        if cachedYTClient == nil {
+            guard let session = try? await ytMusicAuth.snapshot() else { return [] }
+            cachedYTClient = YTMusicClient(session: session)
+        }
+        guard let client = cachedYTClient else { return [] }
+        return (try? await client.search(query)) ?? []
+    }
+
     /// Stops issuing new work. Preserves partial `needsReview` and `report`.
     func cancel() {
         cancelled = true
@@ -335,7 +351,8 @@ struct ImportReport {
     var failed: [ImportFailure] = []
 }
 
-struct ImportFailure {
+struct ImportFailure: Identifiable {
+    let id = UUID()
     let track: SpotifyTrack?  // nil for playlist-level failures
     let reason: String
 }

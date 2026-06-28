@@ -2,6 +2,7 @@ import SwiftUI
 
 struct ConnectView: View {
 	@ObservedObject var coordinator: ImportCoordinator
+	@Environment(\.dismiss) private var dismiss
 	@State private var isConnecting = false
 
 	var body: some View {
@@ -12,7 +13,7 @@ struct ConnectView: View {
 
 					Image(systemName: "music.note.list")
 						.font(.system(size: 52, weight: .light))
-						.foregroundStyle(Color.ytRed)
+						.foregroundStyle(.secondary)
 						.padding(.top, 8)
 
 					VStack(spacing: 10) {
@@ -57,6 +58,9 @@ struct ConnectView: View {
 			Divider()
 
 			HStack {
+				Button("Cancel") { dismiss() }
+					.buttonStyle(.plain)
+					.foregroundStyle(.secondary)
 				Spacer()
 				// Gate hides the button entirely — the callout above is the CTA in that state
 				if coordinator.isYTMusicSignedIn {
