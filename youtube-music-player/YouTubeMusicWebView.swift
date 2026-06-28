@@ -242,8 +242,19 @@ struct YouTubeMusicWebView: NSViewRepresentable {
             decidePolicyFor navigationAction: WKNavigationAction,
             decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
         ) {
-            guard let url = navigationAction.request.url, let host = url.host else {
+            guard let url = navigationAction.request.url else {
                 decisionHandler(.allow)
+                return
+            }
+            // Hostless navigations: only allow about:blank. Reject file:/data:/etc.
+            // so an allowed page or redirect can't render local-file or arbitrary
+            // data content inside this unsandboxed WebView.
+            guard let host = url.host else {
+                if url.scheme == "about" {
+                    decisionHandler(.allow)
+                } else {
+                    decisionHandler(.cancel)
+                }
                 return
             }
 
