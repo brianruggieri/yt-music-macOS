@@ -127,7 +127,7 @@ final class ImportCoordinator: ObservableObject {
                 let tracks = try await spotifyClient.tracks(playlistID: playlist.id)
                 sources.append((playlist.name, tracks))
             } catch {
-                errorMessage = "Couldn't load "\(playlist.name)": \(error.localizedDescription)"
+                errorMessage = "Couldn't load \"\(playlist.name)\": \(error.localizedDescription)"
             }
         }
         if includeLiked, !cancelled {
@@ -229,7 +229,7 @@ final class ImportCoordinator: ObservableObject {
             } catch {
                 report.failed.append(ImportFailure(
                     track: nil,
-                    reason: "Create "\(source.label)": \(error.localizedDescription)"))
+                    reason: "Create \"\(source.label)\": \(error.localizedDescription)"))
                 continue
             }
 
@@ -267,12 +267,12 @@ final class ImportCoordinator: ObservableObject {
                     for vid in failed {
                         report.failed.append(ImportFailure(
                             track: nil,
-                            reason: "\(vid) failed in "\(source.label)""))
+                            reason: "\(vid) failed in \"\(source.label)\""))
                     }
                 } catch {
                     report.failed.append(ImportFailure(
                         track: nil,
-                        reason: "Batch add to "\(source.label)": \(error.localizedDescription)"))
+                        reason: "Batch add to \"\(source.label)\": \(error.localizedDescription)"))
                 }
             }
         }

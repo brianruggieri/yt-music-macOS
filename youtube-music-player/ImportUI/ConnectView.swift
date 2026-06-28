@@ -65,7 +65,7 @@ struct ConnectView: View {
 				// Gate hides the button entirely — the callout above is the CTA in that state
 				if coordinator.isYTMusicSignedIn {
 					ImportCTAButton(
-						"Connect Spotify",
+						title: "Connect Spotify",
 						systemImage: "link",
 						isLoading: isConnecting
 					) {

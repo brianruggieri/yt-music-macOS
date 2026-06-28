@@ -13,6 +13,12 @@ struct ContentView: View {
     @State private var discordRPC = DiscordRPC()
     @State private var didRegisterObservers = false
 
+    // Import sheet — coordinator is built lazily in onAppear once the WKWebView exists.
+    // ImportSheet owns @ObservedObject on the coordinator so its @Published changes drive
+    // its own body; ContentView only needs the reference and the shared isPresented flag.
+    @ObservedObject private var importLauncher = ImportLauncher.shared
+    @State private var importCoordinator: ImportCoordinator?
+
     var body: some View {
         VStack(spacing: 0) {
             // Window header for dragging
@@ -29,6 +35,16 @@ struct ContentView: View {
             didRegisterObservers = true
             mediaKeyHandler.setViewModel(webViewModel)
             setupDiscordPresence()
+
+            // makeNSView runs before onAppear, so webViewModel.webView is set by now.
+            if let wv = webViewModel.webView {
+                importCoordinator = ImportCoordinator(webView: wv)
+            }
+        }
+        .sheet(isPresented: $importLauncher.isPresented) {
+            if let coordinator = importCoordinator {
+                ImportSheet(coordinator: coordinator)
+            }
         }
     }
 

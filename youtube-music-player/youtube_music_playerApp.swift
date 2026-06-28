@@ -17,6 +17,13 @@ struct youtube_music_playerApp: App {
         }
         .windowStyle(.hiddenTitleBar)
         .defaultSize(width: 1200, height: 800)
+        .commands {
+            CommandGroup(after: .newItem) {
+                Button("Import from Spotify…") {
+                    ImportLauncher.shared.isPresented = true
+                }
+            }
+        }
     }
 }
 

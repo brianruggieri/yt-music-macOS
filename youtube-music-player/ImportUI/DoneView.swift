@@ -106,7 +106,7 @@ struct DoneView: View {
 
 			HStack {
 				Spacer()
-				ImportCTAButton("Done", systemImage: "checkmark", action: onDismiss)
+				ImportCTAButton(title: "Done", systemImage: "checkmark", action: onDismiss)
 			}
 			.padding(.horizontal, 20)
 			.padding(.vertical, 14)

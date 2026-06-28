@@ -54,7 +54,7 @@ struct ReviewView: View {
 			HStack {
 				Spacer()
 				ImportCTAButton(
-					"Import \(importCount) \(importCount == 1 ? "song" : "songs")",
+					title: "Import \(importCount) \(importCount == 1 ? "song" : "songs")",
 					systemImage: "arrow.down.circle",
 					isLoading: isConfirming
 				) {
@@ -182,7 +182,7 @@ private struct ReviewRow: View {
 					result.chosen = best
 					isSearching = false
 				} label: {
-					Label("Accept "\(best.title)"", systemImage: "checkmark")
+					Label("Accept \"\(best.title)\"", systemImage: "checkmark")
 				}
 
 				if result.candidates.count > 1 {
@@ -268,7 +268,7 @@ private struct ReviewRow: View {
 					.foregroundStyle(.tertiary)
 					.padding(.horizontal, 4)
 			} else if filteredCandidates.isEmpty {
-				Text("No matches for "\(searchText)"")
+				Text("No matches for \"\(searchText)\"")
 					.font(.caption)
 					.foregroundStyle(.tertiary)
 					.padding(.horizontal, 4)

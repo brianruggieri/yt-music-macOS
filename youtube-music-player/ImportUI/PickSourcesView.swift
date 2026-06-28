@@ -35,7 +35,7 @@ struct PickSourcesView: View {
 					.foregroundStyle(.secondary)
 				Spacer()
 				ImportCTAButton(
-					"Continue",
+					title: "Continue",
 					systemImage: "arrow.right",
 					isLoading: isStarting,
 					disabled: !canContinue

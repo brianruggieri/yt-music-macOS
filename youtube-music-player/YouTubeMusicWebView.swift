@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import WebKit
 
@@ -219,6 +220,59 @@ struct YouTubeMusicWebView: NSViewRepresentable {
                     self.viewModel.notifyTrackChange(title: title, artist: artist, artworkUrl: artworkUrl, isPlaying: isPlaying)
                 }
             }
+        }
+
+        // MARK: - Navigation policy
+        //
+        // Host policy (in evaluation order):
+        //   1. No host (about:blank, data:, file:)  → allow
+        //   2. support.google.com / help.youtube.com → cancel + show import sheet
+        //      (YT Music's "Transfer playlists" link lands here; intercept before the
+        //       google.com allow-entry below would swallow it)
+        //   3. Allowed suffixes (YTM core + Google auth/CDN)  → allow
+        //   4. Everything else  → cancel + open in system browser
+        //
+        // Google auth domains (accounts.google.com etc.) are explicitly allowed so
+        // login keeps working. When in doubt, allow — stranding the user is worse
+        // than leaking one unexpected navigation into the WebView.
+        //
+        // ponytail: permit-list; add entries if new Google auth subdomains appear
+        func webView(
+            _ webView: WKWebView,
+            decidePolicyFor navigationAction: WKNavigationAction,
+            decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
+        ) {
+            guard let url = navigationAction.request.url, let host = url.host else {
+                decisionHandler(.allow)
+                return
+            }
+
+            // Transfer-playlists dead-end → import sheet
+            if host == "support.google.com" || host == "help.youtube.com" {
+                decisionHandler(.cancel)
+                Task { @MainActor in ImportLauncher.shared.isPresented = true }
+                return
+            }
+
+            let allowedSuffixes = [
+                "music.youtube.com",
+                "youtube.com",
+                "googlevideo.com",
+                "accounts.google.com",
+                "googleapis.com",
+                "gstatic.com",
+                "googleusercontent.com",
+                "ggpht.com",
+                "ytimg.com",
+            ]
+            for suffix in allowedSuffixes where host == suffix || host.hasSuffix(".\(suffix)") {
+                decisionHandler(.allow)
+                return
+            }
+
+            // Genuine off-site link → system browser
+            NSWorkspace.shared.open(url)
+            decisionHandler(.cancel)
         }
     }
 }
