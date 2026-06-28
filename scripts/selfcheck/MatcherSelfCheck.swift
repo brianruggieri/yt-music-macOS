@@ -16,6 +16,8 @@ import Foundation
         assert(Matcher.match(base, candidates:[vid("Chaise Longue","Wet Leg",197000)]).confidence == .low)
         // not found -> none, chosen nil
         let none = Matcher.match(base, candidates:[]); assert(none.confidence == .none && none.chosen == nil)
+        // Radio Edit is a real version marker -> must NOT match base track at .high (regression: fix for over-stripping)
+        assert(Matcher.match(base, candidates:[song("Chaise Longue (Radio Edit)","Wet Leg",197500,nil)]).confidence == .low)
         print("Matcher self-check PASS")
     }
 }

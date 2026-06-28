@@ -22,12 +22,16 @@ enum TextNormalize {
 
 	/// normalize() then strip parenthetical/bracket noise for comparison.
 	static func stripSuffixes(_ s: String) -> String {
-		// Remove (...) and [...] blocks containing noise keywords, then strip trailing noise like "- remaster"
+		// Remove (...) and [...] blocks ONLY when they contain noise keywords.
+		// Noise = metadata that doesn't denote a different artistic version.
+		// NOT stripped: live, acoustic, demo, remix, radio edit, extended, single version,
+		//               instrumental, karaoke, cover, session, version.
+		// ponytail: keyword list covers known noise; add here if new noise patterns emerge
+		let noiseKw = "remaster(?:ed)?|reissue|anniversary|edition|explicit|clean|mono|stereo|feat|ft|original\\s+mix|bonus\\s+track|deluxe"
 		var result = s
-		// ponytail: simple regex for the common noise patterns; add more patterns if needed
 		let patterns = [
-			"\\s*\\([^)]*\\)",          // any (...) block
-			"\\s*\\[[^\\]]*\\]",        // any [...] block
+			"(?i)\\s*\\((?=[^)]*\\b(?:\(noiseKw))\\b)[^)]*\\)",    // (...) containing noise keyword
+			"(?i)\\s*\\[(?=[^\\]]*\\b(?:\(noiseKw))\\b)[^\\]]*\\]", // [...] containing noise keyword
 			"(?i)\\s*-\\s*remaster\\w*", // "- remaster" / "- remastered"
 			"(?i)\\s*-\\s*live\\b",      // "- live"
 			"(?i)\\s*feat\\.?\\s+[^,]*", // "feat. ..." at end
