@@ -251,13 +251,14 @@ struct YouTubeMusicWebView: NSViewRepresentable {
             // support.google.com / help.youtube.com are checked here BEFORE the
             // google.com allow-entry below would pass them through.
             // Only the specific "Transfer playlists from other apps" article is
-            // intercepted; matching on "transfer" or "musicpremium" in the URL
-            // covers the canonical article path and YT Music's deep-link query params.
-            // All other help/support links open in the system browser instead.
-            // ponytail: update discriminator if Google moves the transfer article
+            // intercepted; we require "transfer" AND a YTM context marker
+            // ("youtubemusic" or "musicpremium") so that unrelated YT Music Premium
+            // help pages (which contain "musicpremium" but no "transfer") fall through
+            // to the system browser instead of opening the importer.
+            // ponytail: heuristic on help-article path — update if Google moves the article
             if host == "support.google.com" || host == "help.youtube.com" {
                 let raw = url.absoluteString.lowercased()
-                if raw.contains("transfer") || raw.contains("musicpremium") {
+                if raw.contains("transfer") && (raw.contains("youtubemusic") || raw.contains("musicpremium")) {
                     decisionHandler(.cancel)
                     Task { @MainActor in ImportLauncher.shared.isPresented = true }
                 } else {

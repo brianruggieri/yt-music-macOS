@@ -150,7 +150,9 @@ final class ImportCoordinator: ObservableObject {
         }
 
         guard !uniqueTracks.isEmpty else {
-            if !cancelled { phase = .review }
+            // Always exit matching to a recoverable phase — leaving .matching on cancel
+            // strands the UI on the progress screen with no way to close or retry.
+            phase = .review
             return
         }
 
