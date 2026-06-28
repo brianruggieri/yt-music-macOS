@@ -50,8 +50,11 @@ enum KeychainStore {
         ]
         var result: CFTypeRef?
         let status = SecItemCopyMatching(query as CFDictionary, &result)
-        guard status == errSecSuccess, let data = result as? Data else {
-            throw KeychainError.notFound
+        guard status == errSecSuccess else {
+            throw status == errSecItemNotFound ? KeychainError.notFound : KeychainError.osStatus(status)
+        }
+        guard let data = result as? Data else {
+            throw KeychainError.osStatus(errSecDecode)
         }
         do {
             return try JSONDecoder().decode(TokenBlob.self, from: data)

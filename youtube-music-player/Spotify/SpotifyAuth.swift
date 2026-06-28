@@ -18,6 +18,9 @@ final class SpotifyAuth: NSObject, ASWebAuthenticationPresentationContextProvidi
     static let shared = SpotifyAuth()
     private override init() {}
 
+    // Strong reference required by ARC — ASWebAuthenticationSession must outlive the callback.
+    private var authSession: ASWebAuthenticationSession?
+
     /// True if a token blob is persisted in the Keychain.
     var isConnected: Bool {
         (try? KeychainStore.load()) != nil
@@ -48,7 +51,8 @@ final class SpotifyAuth: NSObject, ASWebAuthenticationPresentationContextProvidi
             let session = ASWebAuthenticationSession(
                 url: authURL,
                 callbackURLScheme: "ytmusic-import" // intercepts ytmusic-import://callback?code=…
-            ) { callbackURL, error in
+            ) { [weak self] callbackURL, error in
+                self?.authSession = nil
                 if let error {
                     cont.resume(throwing: SpotifyAuthError.sessionError(error))
                     return
@@ -67,6 +71,7 @@ final class SpotifyAuth: NSObject, ASWebAuthenticationPresentationContextProvidi
             }
             session.presentationContextProvider = self
             session.prefersEphemeralWebBrowserSession = false
+            authSession = session
             session.start()
         }
 
@@ -76,7 +81,13 @@ final class SpotifyAuth: NSObject, ASWebAuthenticationPresentationContextProvidi
     /// Returns a valid access token. Refreshes silently if expired; throws `needsReauth` if
     /// no refresh token is available (user must call `authorize()` again).
     func validAccessToken() async throws -> String {
-        let blob = try KeychainStore.load()
+        let blob: TokenBlob
+        do {
+            blob = try KeychainStore.load()
+        } catch {
+            // notFound = not yet connected; any other keychain error = treat as needing reauth.
+            throw SpotifyAuthError.needsReauth
+        }
         // Give a 60-second buffer before the actual expiry.
         if blob.expiresAt > Date().addingTimeInterval(60) {
             return blob.accessToken
@@ -84,7 +95,11 @@ final class SpotifyAuth: NSObject, ASWebAuthenticationPresentationContextProvidi
         guard let refreshToken = blob.refreshToken else {
             throw SpotifyAuthError.needsReauth
         }
-        return try await refresh(refreshToken: refreshToken)
+        do {
+            return try await refresh(refreshToken: refreshToken)
+        } catch {
+            throw SpotifyAuthError.needsReauth
+        }
     }
 
     /// Removes stored tokens from the Keychain.
@@ -121,10 +136,12 @@ final class SpotifyAuth: NSObject, ASWebAuthenticationPresentationContextProvidi
         var req = URLRequest(url: URL(string: "\(SpotifyConfig.authBase)/api/token")!)
         req.httpMethod = "POST"
         req.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        // ponytail: subtract =&+ so those chars in values can't break the form-encoded body.
+        let formSafe = CharacterSet.urlQueryAllowed.subtracting(CharacterSet(charactersIn: "=&+"))
         req.httpBody = body
             .map { k, v in
-                let ek = k.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? k
-                let ev = v.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? v
+                let ek = k.addingPercentEncoding(withAllowedCharacters: formSafe) ?? k
+                let ev = v.addingPercentEncoding(withAllowedCharacters: formSafe) ?? v
                 return "\(ek)=\(ev)"
             }
             .joined(separator: "&")
@@ -148,7 +165,7 @@ final class SpotifyAuth: NSObject, ASWebAuthenticationPresentationContextProvidi
     // MARK: - ASWebAuthenticationPresentationContextProviding
 
     func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
-        NSApplication.shared.windows.first ?? NSWindow()
+        NSApplication.shared.windows.first ?? NSWindow(contentRect: .zero, styleMask: .borderless, backing: .buffered, defer: true)
     }
 }
 
