@@ -5,7 +5,21 @@ import WebKit
 @MainActor
 class YouTubeMusicViewModel {
     weak var webView: WKWebView?
-    var onTrackChange: ((String?, String?, URL?, Bool) -> Void)?
+
+    // Multiple consumers observe track changes (Now Playing, Discord). Use a list
+    // instead of a single closure so registration order can't silently clobber
+    // one observer with another.
+    private var trackChangeObservers: [(String?, String?, URL?, Bool) -> Void] = []
+
+    func addTrackChangeObserver(_ observer: @escaping (String?, String?, URL?, Bool) -> Void) {
+        trackChangeObservers.append(observer)
+    }
+
+    func notifyTrackChange(title: String?, artist: String?, artworkUrl: URL?, isPlaying: Bool) {
+        for observer in trackChangeObservers {
+            observer(title, artist, artworkUrl, isPlaying)
+        }
+    }
 
     func playPause() {
         let js = "document.querySelector('#play-pause-button')?.click();"
@@ -174,7 +188,7 @@ struct YouTubeMusicWebView: NSViewRepresentable {
                 let isPlaying = body["isPlaying"] as? Bool ?? false
 
                 Task { @MainActor in
-                    self.viewModel.onTrackChange?(title, artist, artworkUrl, isPlaying)
+                    self.viewModel.notifyTrackChange(title: title, artist: artist, artworkUrl: artworkUrl, isPlaying: isPlaying)
                 }
             }
         }
