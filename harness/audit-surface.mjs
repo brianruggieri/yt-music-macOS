@@ -47,6 +47,7 @@ try {
     function W(a,b){return (Math.max(L(a),L(b))+0.05)/(Math.min(L(a),L(b))+0.05);}
     function up(e){return e.parentElement||(e.parentNode&&e.parentNode.host)||null;}
     function bgEl(el){for(var e=el;e;e=up(e)){var c=toRGB(getComputedStyle(e).backgroundColor);if(c&&c.a>=1)return {c:c,el:e};}return {c:{r:243,g:243,b:243},el:document.body};}
+    function comp(fg,bg){return fg.a<1?{r:Math.round(fg.r*fg.a+bg.r*(1-fg.a)),g:Math.round(fg.g*fg.a+bg.g*(1-fg.a)),b:Math.round(fg.b*fg.a+bg.b*(1-fg.a))}:fg;}
     function sel(el){var s=el.tagName.toLowerCase();if(el.id)s+='#'+el.id;else if(typeof el.className==='string'&&el.className)s+='.'+el.className.trim().split(/\s+/)[0];return s;}
     var out=[]; var els=document.querySelectorAll('body *');
     for(var i=0;i<els.length;i++){var el=els[i];
@@ -55,7 +56,7 @@ try {
       var st=getComputedStyle(el); if(st.visibility==='hidden'||st.opacity==='0') continue;
       var r=el.getBoundingClientRect(); if(r.width<8||r.height<6||r.bottom<0||r.top>innerHeight) continue;
       var fg=toRGB(st.color); if(!fg||fg.a===0) continue;
-      var bg=bgEl(el).c; var ra=W(fg,bg);
+      var bg=bgEl(el).c; var ra=W(comp(fg,bg),bg);
       var fs=parseFloat(st.fontSize)||14; var lg=fs>=24||(fs>=18.66&&(+st.fontWeight)>=700);
       if(ra<(lg?3:4.5)) out.push({kind:'text',sel:sel(el),wcag:+ra.toFixed(2),fg:st.color,bg:'rgb('+bg.r+','+bg.g+','+bg.b+')',text:el.textContent.trim().slice(0,32)});
     }
@@ -73,7 +74,7 @@ try {
       var fc=ist.fill&&ist.fill!=='none'&&ist.fill!=='rgba(0, 0, 0, 0)'?toRGB(ist.fill):null;
       if(!fc) fc=toRGB(ist.color);
       if(!fc||fc.a<0.4) continue;
-      var ibg=bgEl(ic).c; var ir=W(fc,ibg);
+      var ibg=bgEl(ic).c; var ir=W(comp(fc,ibg),ibg);
       if(ir<3) out.push({kind:'icon',sel:sel(ic.closest('button,a,[role="button"],tp-yt-paper-icon-button,yt-icon')||ic),wcag:+ir.toFixed(2),fg:'fill '+(ist.fill||ist.color),bg:'rgb('+ibg.r+','+ibg.g+','+ibg.b+')',text:(ic.closest('[aria-label]')&&ic.closest('[aria-label]').getAttribute('aria-label')||'icon').slice(0,32)});
     }
     return out;

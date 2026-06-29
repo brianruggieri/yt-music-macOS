@@ -315,7 +315,15 @@ enum LightThemeEngine {
                 if (ch === ',' && depth === 0) { parts.push(cur); cur = ''; } else cur += ch;
             }
             if (cur.trim()) parts.push(cur);
-            return parts.map(p => 'html[data-ytm-mode="light"] ' + p.trim()).join(', ');
+            return parts.map(p => {
+                p = p.trim();
+                // A part rooted at <html> (e.g. "html", "html, body") must MERGE the mode
+                // attribute onto html, not become a descendant of it (html has no html
+                // child). Without this, "html, body" scoped only on the first selector left
+                // "body" global — leaking light-mode rules into native dark.
+                if (/^html(\b|[.#:[])/.test(p)) return p.replace(/^html/, 'html[data-ytm-mode="light"]');
+                return 'html[data-ytm-mode="light"] ' + p;
+            }).join(', ');
         }
 
         // ---------- scan YT's stylesheets ----------
@@ -415,7 +423,9 @@ enum LightThemeEngine {
             // 2. surfaces painted with literal colors, rerouted through the tokens,
             //    plus the light-mode depth polish.
             for (const fix of SURFACE_FIXES.concat(ENHANCE, RED, FOCUS)) {
-                css += 'html[data-ytm-mode="light"] ' + fix[0] + ' { ' + fix[1].split('; ').map(d => d + ' !important').join('; ') + '; }\n';
+                // scope() each comma-separated part — a naive single prefix would scope only
+                // the first selector and let the rest apply globally (dark mode included).
+                css += scope(fix[0]) + ' { ' + fix[1].split('; ').map(d => d + ' !important').join('; ') + '; }\n';
             }
 
             // 3. per-selector light-grey literals (direct color + local --yt* tokens)
@@ -498,13 +508,16 @@ enum LightThemeEngine {
 
         const bgFixedEls = new Set();
         const surfFixedEls = new Set();
+        const iconFixedEls = new Set();
         function clearFixes() {
             for (const el of fixedEls) { el.style.removeProperty('color'); el.removeAttribute('data-ytm-fixed'); }
             for (const el of bgFixedEls) { el.style.removeProperty('background-color'); }
             for (const el of surfFixedEls) el.style.removeProperty('border');
+            for (const el of iconFixedEls) { el.style.removeProperty('fill'); el.style.removeProperty('color'); }
             fixedEls.clear();
             bgFixedEls.clear();
             surfFixedEls.clear();
+            iconFixedEls.clear();
         }
 
         // pinImmersive / pinMenu overwrite inline styles with !important; on their own
@@ -612,6 +625,35 @@ enum LightThemeEngine {
                 }
                 if (r < AA) failing++;
             }
+
+            // Icon pass (WCAG 1.4.11, 3:1). The bulk inversion can flip a dark glyph to
+            // near-white; on a light surface that's an invisible control. Darken NEUTRAL
+            // (near-grayscale) icon fills that fail 3:1 against a light effective bg.
+            // Excluded — and these are exactly the icons that SHOULD stay light:
+            //   • over media (white glyph on album art + scrim)
+            //   • on a dark/coloured surface (e.g. the white triangle on the #f03 play button)
+            //   • saturated/brand glyphs (semantic colour, conveyed redundantly)
+            const mediaRects = [].slice.call(document.querySelectorAll('img, yt-img-shadow, [style*="background-image"]'))
+                .map(m => m.getBoundingClientRect()).filter(b => b.width > 24 && b.height > 24);
+            const overMedia = (r) => { const cx = r.left + r.width / 2, cy = r.top + r.height / 2; return mediaRects.some(b => cx >= b.left && cx <= b.right && cy >= b.top && cy <= b.bottom); };
+            for (const ic of document.querySelectorAll('button svg, a svg, [role="button"] svg, tp-yt-paper-icon-button svg, yt-icon svg')) {
+                if (iconFixedEls.has(ic)) continue;
+                const ir = ic.getBoundingClientRect();
+                if (ir.width < 10 || ir.width > 56 || ir.height < 10 || ir.bottom < 0 || ir.top > innerHeight) continue;
+                const ist = getComputedStyle(ic);
+                if (ist.visibility === 'hidden' || (+ist.opacity) < 0.4) continue;
+                let fc = (ist.fill && ist.fill !== 'none' && ist.fill !== 'rgba(0, 0, 0, 0)') ? toRGB(ist.fill) : toRGB(ist.color);
+                if (!fc || fc.a < 0.4) continue;
+                if (Math.max(fc.r, fc.g, fc.b) - Math.min(fc.r, fc.g, fc.b) > 40) continue;   // saturated → semantic, leave it
+                if (overMedia(ir)) continue;
+                const ibg = effectiveBg(ic).c;
+                if (relLum(ibg) < 0.5) continue;                  // dark/coloured surface → a light glyph is correct
+                if (ratio(relLum(fc), relLum(ibg)) >= 3) continue; // already fine
+                ic.style.setProperty('fill', 'rgb(20, 20, 20)', 'important');
+                ic.style.setProperty('color', 'rgb(20, 20, 20)', 'important');
+                iconFixedEls.add(ic);
+            }
+
             const coverage = total ? 1 - failing / total : 1;
             document.documentElement.setAttribute('data-ytm-coverage', Math.round(coverage * 100));
 
@@ -659,13 +701,16 @@ enum LightThemeEngine {
             const el = document.getElementById('nav-bar-background');
             if (!el) return;
             const light = !degraded && document.documentElement.getAttribute('data-ytm-mode') === 'light';
-            if (!light) { el.style.removeProperty('background'); el.style.removeProperty('animation'); return; }
+            // Dark/native: only undo OUR pin (tracked via __ytmNavPinned). A blind
+            // removeProperty would strip YT's own inline dark background here.
+            if (!light) { if (el.__ytmNavPinned) { el.style.removeProperty('background'); el.style.removeProperty('animation'); el.__ytmNavPinned = false; } return; }
             // YT animates this element's colour via the Web Animations API, which
             // outranks even inline !important — cancel those, then pin the fixed light
             // surface (a constant, since YT poisons our --ytmusic-* primitives here).
             if (el.getAnimations) el.getAnimations().forEach(a => a.cancel());
             const want = 'rgb(243, 243, 243)';
             if (getComputedStyle(el).backgroundColor !== want) el.style.setProperty('background', want, 'important');
+            el.__ytmNavPinned = true;
             if (!el.__ytmNavObs) {
                 el.__ytmNavObs = true;
                 new MutationObserver(pinNav).observe(el, { attributes: true, attributeFilter: ['style'] });
@@ -710,9 +755,12 @@ enum LightThemeEngine {
                 // ring (stroke="#fff") and triangle (fill="#fff") must STAY white. So we
                 // recolour just that group's fill — not a blanket #fff swap, which also
                 // darkened the triangle/ring and made the button look black.
-                fetch(logoOrigSrc).then(r => r.text()).then(svg => {
+                fetch(logoOrigSrc).then(r => r.ok ? r.text() : null).then(svg => {
+                    if (!svg || svg.indexOf('<svg') < 0) return;        // not the SVG (404/HTML/blocked) — leave the logo as-is
                     const lit = svg.replace(/<g fill="#fff">/i, '<g fill="#0f0f0f">');
+                    if (lit === svg) return;                            // wordmark group not found (asset changed) — don't ship an unrecoloured copy
                     logoUri = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(lit);
+                    schedule();                                         // apply now, even if no further mutation fires a tick
                 }).catch(() => {}).finally(() => { logoFetching = false; });
                 return;
             }
@@ -756,7 +804,9 @@ enum LightThemeEngine {
         function pinTokens() {
             const de = document.documentElement;
             if (degraded || de.getAttribute('data-ytm-mode') !== 'light') {
-                for (const k in PIN_TOKENS) de.style.removeProperty(k);
+                // Only undo OUR pins. If YT has since written its own (dark, immersive)
+                // value for a token, leave it — a blind remove would fight native dark.
+                for (const k in PIN_TOKENS) if (de.style.getPropertyValue(k) === PIN_TOKENS[k]) de.style.removeProperty(k);
                 return;
             }
             for (const k in PIN_TOKENS) {
@@ -849,7 +899,14 @@ enum LightThemeEngine {
             applyMode();
             tick();
             // Re-theme as YT streams in late CSS / new views (closes the lazy-load gap).
-            new MutationObserver(schedule).observe(document.documentElement, { childList: true, subtree: true });
+            // Re-arm full-cadence auditing whenever NODES ARE ADDED (lazy-loaded carousel
+            // rows, infinite scroll). Otherwise, once the page settled into backoff, new
+            // content that reuses existing CSS (so build() doesn't grow) would wait up to
+            // BACKOFF ticks to get themed — long enough to read as light text on scroll.
+            new MutationObserver((muts) => {
+                for (const m of muts) { if (m.addedNodes && m.addedNodes.length) { stableAudits = 0; break; } }
+                schedule();
+            }).observe(document.documentElement, { childList: true, subtree: true });
             // A few eager early passes during initial load, then rely on the observer.
             let boots = 0; const bootTimer = setInterval(() => { tick(); if (++boots >= 6) clearInterval(bootTimer); }, 800);
         }

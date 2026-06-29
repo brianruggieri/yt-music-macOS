@@ -92,7 +92,9 @@ export function auditContrast() {
     if (parseFloat(st.borderTopWidth) > 0) { const bc = toRGB(st.borderTopColor); if (bc && bc.a > 0.06) continue; }
     const parent = up(el); if (!parent) continue;
     const pL = relLum(effBg(parent));
-    const ratio = wcag(bg, { r: Math.round(pL * 255), g: Math.round(pL * 255), b: Math.round(pL * 255) });
+    // Compare luminances directly — don't round a luminance back into a fake gray RGB and
+    // re-gamma it through wcag(), which distorts the surface ratio.
+    const ratio = (Math.max(bgL, pL) + 0.05) / (Math.min(bgL, pL) + 0.05);
     if (ratio < 1.35) {
       failures.push({ kind: 'surface', sel: sel(el), wcag: +ratio.toFixed(2), bg: st.backgroundColor });
     }

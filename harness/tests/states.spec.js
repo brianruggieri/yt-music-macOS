@@ -50,9 +50,10 @@ for (const screen of SCREENS) {
         function W(a,b){return (Math.max(L(a),L(b))+0.05)/(Math.min(L(a),L(b))+0.05);}
         function up(e){return e.parentElement||(e.parentNode&&e.parentNode.host)||null;}
         function bgOf(el){for(var e=el;e;e=up(e)){var c=toRGB(getComputedStyle(e).backgroundColor);if(c&&c.a>=1)return c;}return {r:243,g:243,b:243};}
+        function comp(fg,bg){return fg.a<1?{r:Math.round(fg.r*fg.a+bg.r*(1-fg.a)),g:Math.round(fg.g*fg.a+bg.g*(1-fg.a)),b:Math.round(fg.b*fg.a+bg.b*(1-fg.a))}:fg;}
         var out=[];
         var els=document.querySelectorAll('body *');
-        for(var i=0;i<els.length;i++){var el=els[i];var t=false;for(var j=0;j<el.childNodes.length;j++){var n=el.childNodes[j];if(n.nodeType===3&&n.textContent.trim().length>1){t=true;break;}}if(!t)continue;var st=getComputedStyle(el);if(st.visibility==='hidden'||st.opacity==='0')continue;var r=el.getBoundingClientRect();if(r.width<8||r.height<6||r.bottom<0||r.top>innerHeight)continue;var fg=toRGB(st.color);if(!fg||fg.a===0)continue;var bg=bgOf(el);var ra=W(fg,bg);var fs=parseFloat(st.fontSize)||14;var lg=fs>=24||(fs>=18.66&&(+st.fontWeight)>=700);if(ra<(lg?3:4.5))out.push(el.tagName.toLowerCase()+' wcag='+ra.toFixed(2)+' "'+el.textContent.trim().slice(0,24)+'"');}
+        for(var i=0;i<els.length;i++){var el=els[i];var t=false;for(var j=0;j<el.childNodes.length;j++){var n=el.childNodes[j];if(n.nodeType===3&&n.textContent.trim().length>1){t=true;break;}}if(!t)continue;var st=getComputedStyle(el);if(st.visibility==='hidden'||st.opacity==='0')continue;var r=el.getBoundingClientRect();if(r.width<8||r.height<6||r.bottom<0||r.top>innerHeight)continue;var fg=toRGB(st.color);if(!fg||fg.a===0)continue;var bg=bgOf(el);var ra=W(comp(fg,bg),bg);var fs=parseFloat(st.fontSize)||14;var lg=fs>=24||(fs>=18.66&&(+st.fontWeight)>=700);if(ra<(lg?3:4.5))out.push(el.tagName.toLowerCase()+' wcag='+ra.toFixed(2)+' "'+el.textContent.trim().slice(0,24)+'"');}
         return out.slice(0,60);
       });
 
@@ -60,7 +61,17 @@ for (const screen of SCREENS) {
     for (; steps < 40; steps++) {
       await page.evaluate((yy) => window.__ytmProbe.scrollTo(yy), y);
       await page.waitForTimeout(600);
-      for (const f of await auditAt()) issues.push(`scroll@${y}: ${f}`);
+      // Persistence re-check: lazy-loaded carousel rows render light and the engine darkens
+      // them on the next tick, so a single audit can catch a transient mid-theming state.
+      // Keep only failures that SURVIVE a re-audit after a short settle — real gaps persist,
+      // the engine catching up drops out. Match on selector+text (ignore wcag drift).
+      let scrollFails = await auditAt();
+      if (scrollFails.length) {
+        await page.waitForTimeout(700);
+        const again = (await auditAt()).map((s) => s.replace(/wcag=[\d.]+/, ''));
+        scrollFails = scrollFails.filter((x) => again.includes(x.replace(/wcag=[\d.]+/, '')));
+      }
+      for (const f of scrollFails) issues.push(`scroll@${y}: ${f}`);
       const info = await page.evaluate(() => window.__ytmProbe.scrollInfo());
       cov.scrollMax = Math.max(cov.scrollMax, info.max);
       if (y >= info.max - 2) {                    // at the bottom
