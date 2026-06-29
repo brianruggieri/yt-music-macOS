@@ -165,7 +165,14 @@ final class ImportCoordinator: ObservableObject {
                 }
             } catch {
                 if gen == runGeneration {
-                    errorMessage = "Couldn't load \"\(playlist.name)\": \(error.localizedDescription)"
+                    // Spotify forbids Dev-Mode apps from reading items of editorial /
+                    // Spotify-owned / some followed playlists (403) — skip with a clear
+                    // message rather than a raw HTTP error; other playlists continue.
+                    if case SpotifyClientError.httpError(403, _) = error {
+                        errorMessage = "Skipped \"\(playlist.name)\" — Spotify doesn't allow importing this playlist (it's editorial or owned by Spotify)."
+                    } else {
+                        errorMessage = "Couldn't load \"\(playlist.name)\": \(error.localizedDescription)"
+                    }
                 }
             }
         }
