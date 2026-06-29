@@ -102,11 +102,18 @@ final class ImportCoordinator: ObservableObject {
         resolvedReviewIDs.insert(trackID)
     }
 
+    /// Token identifying the current run; capture before an async review search and
+    /// pass it back to `setReviewCandidates` so a stale search can't mutate a later run.
+    var currentRunToken: Int { runGeneration }
+
     /// Replace a review row's candidates by track id (used by manual YTM search).
     /// Looks the row up by id rather than writing through a possibly-stale array
-    /// binding — a no-op if the sheet was reset mid-search and the row is gone.
-    func setReviewCandidates(trackID: String, candidates: [YTMCandidate]) {
-        guard let idx = needsReview.firstIndex(where: { $0.track.id == trackID }) else { return }
+    /// binding, and fences on the run token so a search from a superseded run (the
+    /// user went back / reopened / re-matched, even if the same track reappears)
+    /// can't overwrite the new run's candidates. No-op if the row is gone.
+    func setReviewCandidates(trackID: String, candidates: [YTMCandidate], runToken: Int) {
+        guard runToken == runGeneration,
+              let idx = needsReview.firstIndex(where: { $0.track.id == trackID }) else { return }
         needsReview[idx].candidates = candidates
     }
 

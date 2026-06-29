@@ -257,11 +257,12 @@ private struct ReviewRow: View {
 						guard !searchText.isEmpty else { return }
 						let query = searchText
 						let trackID = result.track.id  // capture before await — binding may go stale on reset
+						let runToken = coordinator.currentRunToken  // fence against a superseded run
 						Task {
 							isYTMSearching = true
 							let hits = await coordinator.search(query)
-							// Update by id, not the (possibly stale) $result binding.
-							coordinator.setReviewCandidates(trackID: trackID, candidates: hits)
+							// Update by id + run token, not the (possibly stale) $result binding.
+							coordinator.setReviewCandidates(trackID: trackID, candidates: hits, runToken: runToken)
 							searchText = ""
 							isYTMSearching = false
 						}
