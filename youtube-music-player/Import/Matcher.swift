@@ -1,7 +1,12 @@
 import Foundation
 
 enum Matcher {
-	static func match(_ track: SpotifyTrack, candidates: [YTMCandidate]) -> MatchResult {
+	/// - Parameter isrcConfirmed: pass `true` when `candidates` came from an ISRC
+	///   search (the candidates are the exact recording). With ISRC confirmation a
+	///   title+artist match is high-confidence even for a video result or one with
+	///   no duration, since ISRC already identifies the precise track — the
+	///   result-type/duration heuristics only matter for text matches.
+	static func match(_ track: SpotifyTrack, candidates: [YTMCandidate], isrcConfirmed: Bool = false) -> MatchResult {
 		guard !candidates.isEmpty else {
 			return MatchResult(track: track, candidates: [], chosen: nil, confidence: .none)
 		}
@@ -29,12 +34,12 @@ enum Matcher {
 			let durOK    = c.durationMs.map { abs($0 - track.durationMs) <= 2000 } ?? true
 			let albumMatch = c.album.map { TextNormalize.normalize($0) } == trackAlbum
 
-			let tier: Int
-			if c.resultType == .song && titleOK && artistOK && durOK {
-				tier = 0 // high
-			} else {
-				tier = 1 // low
-			}
+			// High requires a strong title+artist match. Without ISRC confirmation it
+			// also requires a catalog song with a close (or absent) duration; with
+			// ISRC confirmation the recording is already pinned, so those are waived.
+			let strongMatch = titleOK && artistOK
+			let songQuality = c.resultType == .song && durOK
+			let tier = (strongMatch && (isrcConfirmed || songQuality)) ? 0 : 1
 			return Scored(candidate: c, tier: tier, albumMatch: albumMatch, durationDiff: durDiff)
 		}
 

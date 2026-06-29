@@ -20,6 +20,12 @@ import Foundation
         assert(Matcher.match(base, candidates:[song("Chaise Longue (Radio Edit)","Wet Leg",197500,nil)]).confidence == .low)
         // duration ABSENT (YTM search omits it) -> title+artist+song still qualifies as high
         assert(Matcher.match(base, candidates:[YTMCandidate(videoId:"x",title:"Chaise Longue",artists:["Wet Leg"],album:nil,durationMs:nil,resultType:.song,videoType:nil)]).confidence == .high)
+        // ISRC-confirmed: a VIDEO result with matching title+artist is high (ISRC pins the exact recording)
+        assert(Matcher.match(base, candidates:[vid("Chaise Longue","Wet Leg",197000)], isrcConfirmed:true).confidence == .high)
+        // same video WITHOUT ISRC confirmation -> low (video never auto-accepts on text match)
+        assert(Matcher.match(base, candidates:[vid("Chaise Longue","Wet Leg",197000)]).confidence == .low)
+        // ISRC-confirmed but title mismatch -> still NOT high (guards against an un-indexed ISRC returning junk)
+        assert(Matcher.match(base, candidates:[song("Totally Different Song","Wet Leg",197000)], isrcConfirmed:true).confidence == .low)
         print("Matcher self-check PASS")
     }
 }

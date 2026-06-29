@@ -398,16 +398,20 @@ final class ImportCoordinator: ObservableObject {
 /// Searches YTM for `track` and returns a MatchResult.
 /// Never throws — search failures produce empty candidates → .none confidence.
 private func searchAndMatch(track: SpotifyTrack, client: YTMusicClient) async -> MatchResult {
-    let query = (track.artists + [track.title]).joined(separator: " ")
-    let candidates: [YTMCandidate]
-    do {
-        candidates = try await withRetry(maxAttempts: 3) {
-            try await client.search(query)
-        }
-    } catch {
-        candidates = []
+    func search(_ q: String) async -> [YTMCandidate] {
+        (try? await withRetry(maxAttempts: 3) { try await client.search(q) }) ?? []
     }
-    return Matcher.match(track, candidates: candidates)
+    // ISRC-first: YouTube indexes ISRCs for official "Art Tracks", so searching the
+    // raw ISRC returns the exact recording. The Matcher's title+artist gate confirms
+    // it (guards against an un-indexed ISRC returning unrelated results). A confirmed
+    // hit is authoritative, so accept it without a second (text) search.
+    if let isrc = track.isrc, !isrc.isEmpty {
+        let isrcMatch = Matcher.match(track, candidates: await search(isrc), isrcConfirmed: true)
+        if isrcMatch.confidence == .high { return isrcMatch }
+    }
+    // Fall back to a text search (artist + title).
+    let query = (track.artists + [track.title]).joined(separator: " ")
+    return Matcher.match(track, candidates: await search(query))
 }
 
 /// Retries `work` on 429 / 5xx with exponential backoff (1 s → 2 s → 4 s … capped at 30 s).
