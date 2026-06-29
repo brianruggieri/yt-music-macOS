@@ -53,6 +53,12 @@ struct ContentView: View {
                 coordinator.resetForPresentation()
             } else {
                 coordinator.cancel()  // stop any in-flight matching/import when sheet closes
+                // YT Music doesn't re-fetch its guide after our external InnerTube write,
+                // so the new playlist won't show in its sidebar until a reload. Reload only
+                // when something was actually imported, to avoid a needless playback interruption.
+                if coordinator.report.imported > 0 {
+                    webViewModel.webView?.reload()
+                }
             }
         }
         .onChange(of: importLauncher.isDiagnosticPresented) { _, presented in
