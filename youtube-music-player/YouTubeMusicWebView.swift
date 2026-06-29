@@ -258,6 +258,14 @@ struct YouTubeMusicWebView: NSViewRepresentable {
                 return
             }
 
+            // Only http/https proceed (and only http/https ever reach NSWorkspace.open
+            // below). Never launch an arbitrary custom-scheme handler app from an
+            // in-webview navigation — real browsers prompt for that; we just refuse.
+            guard url.scheme == "http" || url.scheme == "https" else {
+                decisionHandler(.cancel)
+                return
+            }
+
             // Transfer-playlists dead-end → import sheet.
             // support.google.com / help.youtube.com are checked here BEFORE the
             // google.com allow-entry below would pass them through.
