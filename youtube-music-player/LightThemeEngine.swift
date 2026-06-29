@@ -179,7 +179,29 @@ enum LightThemeEngine {
         // hover are translucent-black overlays that should stay dark; the video/art
         // region is a neutral letterbox.
         const SURFACE_FIXES = [
-            ['.av-toggle, .video-button', 'background-color: var(--ytmusic-color-black1)'],
+            // Song/Video player toggle (ytmusic-av-toggle). Mirror dark mode's own logic:
+            // there the track is dark (#212121) and YT lifts the SELECTED segment onto a
+            // lighter white-alpha fill (`[playback-mode] .{song,video}-button`), while the
+            // unselected segment stays the track colour. Inverting that for light: the track
+            // and unselected segment are the same recessed grey (already produced by the
+            // token inversion, ~#dedede), and the selected segment becomes a RAISED WHITE
+            // pill (+ soft shadow). We key off YT's OWN selection signal — the host
+            // `playback-mode` attribute (ATV→song, OMV→video) — and repeat its `.ytmusic-av-toggle`
+            // class so we out-specify the inverted `.song-button.ytmusic-av-toggle` grey rule.
+            // The earlier fix painted track AND both buttons one flat grey, which is exactly
+            // why neither side read as selected.
+            ['.av-toggle', 'background-color: var(--ytmusic-color-black1)'],
+            ['ytmusic-av-toggle[playback-mode="ATV_PREFERRED"] .song-button.ytmusic-av-toggle, ytmusic-av-toggle[playback-mode="OMV_PREFERRED"] .video-button.ytmusic-av-toggle',
+                'background-color: rgb(255, 255, 255); box-shadow: 0 1px 2px rgba(0,0,0,0.2)'],
+            // Modal scrim (tp-yt-iron-overlay-backdrop — the dimming layer behind every
+            // dialog: edit-playlist, add-to-playlist, etc.). YT colours it from an inverted
+            // iron/paper token, so in light mode it flips to near-WHITE — clicking a dialog
+            // open then WASHES the page out (desaturated, low-contrast) instead of darkening
+            // it, and the white dialog on a washed-white page is nearly invisible. A modal
+            // backdrop must always be a DARK translucent scrim (Material and macOS both dim
+            // dark, light theme or not). Pin it dark (YT keeps its own ~0.3 opacity) so the
+            // page dims properly and the dialog on top pops.
+            ['tp-yt-iron-overlay-backdrop', 'background-color: #000000'],
             // The immersive backdrop / scrolled nav bar fill is one element YT colors
             // inline from page content (a dark value the cascade can't reach). Pin it
             // to the light surface so both the header and the scroll bar read light.
@@ -199,9 +221,14 @@ enum LightThemeEngine {
             ['ytmusic-menu-popup-renderer yt-icon, ytmusic-menu-popup-renderer svg', 'color: rgb(20, 20, 20); fill: rgb(20, 20, 20)'],
             // Default for every play button: keep the triangle dark so the glyph stays
             // visible on a light circle (YT's knockout reads as near-white on near-white
-            // otherwise). Overlay play buttons that sit ON album/video art keep this
-            // neutral look — a red fill there turns into a red square over the art.
+            // otherwise).
             ['ytmusic-play-button-renderer yt-icon, ytmusic-play-button-renderer svg', 'color: rgb(3, 3, 3); fill: rgb(3, 3, 3)'],
+            // EXCEPTION — play buttons overlaid on album/video art (the thumbnail-overlay
+            // renderer: track-row hover buttons, playlist/album card buttons). These sit on
+            // imagery behind a dark hover scrim, exactly like dark mode, where YT keeps the
+            // triangle WHITE. The blanket dark rule above would paint them near-black on a
+            // dark scrim (invisible) — so re-whiten them here (more specific → wins).
+            ['ytmusic-item-thumbnail-overlay-renderer ytmusic-play-button-renderer yt-icon, ytmusic-item-thumbnail-overlay-renderer ytmusic-play-button-renderer svg', 'color: #ffffff; fill: #ffffff'],
             // Brand red, white triangle — ONLY the standalone circular play affordances:
             // the page header CTA and the left-bar (guide) playlist buttons. These are
             // real circular buttons, so a #f03 fill reads as a proper brand play button.
@@ -244,6 +271,14 @@ enum LightThemeEngine {
             // border-left, which we keep as YT's category cue.
             ['button.ytmusic-navigation-button-renderer',
                 'background-color: rgba(0,0,0,0.04); box-shadow: inset 0 0 0 1px rgba(0,0,0,0.16)'],
+            // YT "tonal" buttons — the guide's "New playlist" button and tonal buttons
+            // elsewhere — fill themselves with a translucent WHITE (rgba(255,255,255,0.1))
+            // that's invisible on the light page, so the button loses all boundary. Give the
+            // whole tonal class the SAME defined card the navigation buttons get: a subtle
+            // fill + a 1px inset hairline ring. Global by design (matches every tonal button),
+            // not a one-off — tonal buttons are *meant* to read as a filled surface.
+            ['button.ytSpecButtonShapeNextTonal',
+                'background-color: rgba(0,0,0,0.05); box-shadow: inset 0 0 0 1px rgba(0,0,0,0.16)'],
         ];
 
         // Brand red, used on purpose in a FEW active/hover places so it keeps meaning
@@ -367,6 +402,13 @@ enum LightThemeEngine {
                             if (hasGradient(v) && hasColor(v)) decls.push('background-image: ' + invertColorsInString(v));
                         } else if (prop === 'background-color' || prop === 'background') {
                             if (c && isDarkOpaqueGray(c)) decls.push(prop + ': ' + invert(v));
+                            // Translucent LIGHT films are YT's hover/active highlights (chips,
+                            // pills, rows, icon buttons all "light up" via rgba(255,255,255,.1-.2)).
+                            // Left as-is they're invisible on the light page — every hover/press
+                            // does nothing. Flip them to the matching dark-alpha so the SAME
+                            // feedback reads on light. invert() damps heavy films; translucent
+                            // BLACK scrims are dark (isLightGray false) → untouched, stay dark.
+                            else if (c && c.a > 0 && c.a < 1 && isLightGray(c)) decls.push(prop + ': ' + invert(v));
                             else if (hasGradient(v) && hasColor(v)) decls.push(prop + ': ' + invertColorsInString(v));
                         } else if (isThemeToken(prop)) {
                             // Local --yt*/--paper* token redefinition (e.g. a popup setting

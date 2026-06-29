@@ -58,16 +58,20 @@ struct YouTubeMusicWebView: NSViewRepresentable {
         config.preferences.javaScriptCanOpenWindowsAutomatically = true
 
         // Inject scrollbar CSS at document start
-        // Thumb colors are read from a CSS variable on <html>; the theme observer
-        // script flips data-ytm-theme so the scrollbars follow YT Music's light/dark.
+        // Thumb colors are read from a CSS variable on <html>; the light-theme engine
+        // sets data-ytm-mode (authoritative — driven by macOS appearance, set before
+        // first paint and degraded-aware), so the scrollbars follow the SAME signal as
+        // the rest of light mode. (The old data-ytm-theme luma-guess observer could leave
+        // this unset → a near-white thumb invisible on the light page.) The light thumb is
+        // a neutral medium grey at macOS-overlay weight so it actually reads on #f3f3f3.
         let css = """
             html {
                 --ytm-sb-thumb: rgba(255, 255, 255, 0.15);
                 --ytm-sb-thumb-hover: rgba(255, 255, 255, 0.25);
             }
-            html[data-ytm-theme="light"] {
-                --ytm-sb-thumb: rgba(0, 0, 0, 0.18);
-                --ytm-sb-thumb-hover: rgba(0, 0, 0, 0.30);
+            html[data-ytm-mode="light"] {
+                --ytm-sb-thumb: rgba(0, 0, 0, 0.32);
+                --ytm-sb-thumb-hover: rgba(0, 0, 0, 0.45);
             }
             *, *::before, *::after {
                 scrollbar-width: thin !important;
@@ -252,6 +256,10 @@ struct YouTubeMusicWebView: NSViewRepresentable {
 
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.navigationDelegate = context.coordinator
+        // uiDelegate supplies the native file picker for <input type=file> (e.g. the
+        // "Edit thumbnail" playlist-cover upload). Without it WKWebView silently drops
+        // the open-panel request and the button does nothing.
+        webView.uiDelegate = context.coordinator
         webView.customUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15"
         webView.setValue(false, forKey: "drawsBackground")
 
@@ -270,11 +278,28 @@ struct YouTubeMusicWebView: NSViewRepresentable {
         Coordinator(viewModel: viewModel)
     }
 
-    class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
+    class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler, WKUIDelegate {
         var viewModel: YouTubeMusicViewModel
 
         init(viewModel: YouTubeMusicViewModel) {
             self.viewModel = viewModel
+        }
+
+        // MARK: - File uploads
+        //
+        // WKWebView has no built-in file picker — a page's <input type=file>.click()
+        // is forwarded here, and if unhandled it's a no-op. YT Music's "Edit thumbnail"
+        // (playlist cover upload) is the visible case: the button looked dead because
+        // the open-panel request had nowhere to go. Bridge it to a native NSOpenPanel.
+        func webView(_ webView: WKWebView,
+                     runOpenPanelWith parameters: WKOpenPanelParameters,
+                     initiatedByFrame frame: WKFrameInfo,
+                     completionHandler: @escaping ([URL]?) -> Void) {
+            let panel = NSOpenPanel()
+            panel.canChooseFiles = true
+            panel.canChooseDirectories = false
+            panel.allowsMultipleSelection = parameters.allowsMultipleSelection
+            panel.begin { completionHandler($0 == .OK ? panel.urls : nil) }
         }
 
         func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
