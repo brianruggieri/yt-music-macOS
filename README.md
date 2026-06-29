@@ -12,6 +12,7 @@ A lightweight native macOS wrapper for YouTube Music with system integration.
 - **Media key support** — Control playback with your keyboard's play/pause, next, and previous keys
 - **Now Playing integration** — See track info in Control Center with album artwork
 - **Discord Rich Presence** — Show what you're listening to on Discord
+- **Spotify import** — Connect a Spotify account to match and import your playlists and liked songs into YouTube Music
 - **Frameless design** — Clean, minimal window that blends with YouTube Music's UI
 - **Native scrollbars** — macOS-style scrollbars for a consistent look
 
@@ -43,17 +44,29 @@ xattr -cr /Applications/YouTube\ Music.app
 ### Building from Source
 
 1. Clone the repository
-2. Copy `Secrets.example.swift` to `Secrets.swift`
-3. Add your [Discord Application ID](https://discord.com/developers/applications) (optional, for Discord Rich Presence)
-4. Open `youtube-music-player.xcodeproj` in Xcode
-5. Build and run (⌘R)
+2. Copy `Secrets.example.swift` to `youtube-music-player/Secrets.swift` and fill in your IDs (both are optional — see below)
+3. Build and run, either way:
+   - **Xcode:** open `youtube-music-player.xcodeproj` and press ⌘R
+   - **Terminal:** `./run.sh` — copies the example into `Secrets.swift` if missing, builds Release, and launches the app
+
+`run.sh` does a clean build each time, so it always picks up newly added source files.
 
 ## Discord Rich Presence Setup
 
 1. Go to [Discord Developer Portal](https://discord.com/developers/applications)
 2. Create a new application
 3. Copy the Application ID
-4. Paste it in `Secrets.swift`
+4. Paste it into `Secrets.swift` as `discordClientId`
+
+## Spotify Import Setup
+
+Importing playlists requires your own Spotify app credentials:
+
+1. Create an app at the [Spotify Developer Dashboard](https://developer.spotify.com/dashboard)
+2. Set the **Redirect URI** to `ytmusic-import://callback`
+3. While the app is in Development Mode, add your Spotify account under the app's users (Spotify caps this at 5 users)
+4. Copy the **Client ID** and paste it into `Secrets.swift` as `spotifyClientID`
+5. Rebuild, then use the in-app **Import from Spotify** flow to connect and import
 
 ## Requirements
 

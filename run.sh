@@ -1,24 +1,24 @@
 #!/usr/bin/env bash
-# Build and launch the app. Usage: ./run.sh
+# Build and launch YouTube Music for macOS.
 set -euo pipefail
 cd "$(dirname "$0")"
 
-# Secrets.swift is gitignored; the build needs it inside the synchronized
-# source folder (Xcode auto-compiles every .swift there).
-PHASE=build
-if [ ! -f youtube-music-player/Secrets.swift ]; then
-  cp Secrets.example.swift youtube-music-player/Secrets.swift
-  # Incremental builds miss a just-added synchronized file; clean once so it's seen.
-  PHASE="clean build"
+# Secrets.swift is in the synchronized source group, so the build needs it to exist.
+# ponytail: copy the example (placeholder Discord ID) if the user hasn't made their own.
+if [[ ! -f youtube-music-player/Secrets.swift ]]; then
+	echo "Secrets.swift missing — copying from Secrets.example.swift"
+	cp Secrets.example.swift youtube-music-player/Secrets.swift
 fi
 
-xcodebuild -project youtube-music-player.xcodeproj \
-  -scheme youtube-music-player -configuration Debug $PHASE
+# Wipe derived data first: Xcode caches the synchronized-group file list, so a stale
+# build/ silently drops newly-added source files (ImportLauncher.swift et al.).
+rm -rf build
 
-# Ask xcodebuild where it put the .app rather than hardcoding the path.
-# Split on " = " so values containing spaces (e.g. "YouTube Music.app") survive.
-eval "$(xcodebuild -project youtube-music-player.xcodeproj \
-  -scheme youtube-music-player -configuration Debug -showBuildSettings \
-  | awk -F' = ' '/ BUILT_PRODUCTS_DIR =/{print "DIR=\""$2"\""} / FULL_PRODUCT_NAME =/{print "APP=\""$2"\""}')"
+xcodebuild \
+	-project youtube-music-player.xcodeproj \
+	-scheme youtube-music-player \
+	-configuration Release \
+	-derivedDataPath build \
+	build
 
-open "$DIR/$APP"
+open "build/Build/Products/Release/YouTube Music.app"
