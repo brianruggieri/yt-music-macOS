@@ -701,9 +701,15 @@ enum LightThemeEngine {
             const el = document.getElementById('nav-bar-background');
             if (!el) return;
             const light = !degraded && document.documentElement.getAttribute('data-ytm-mode') === 'light';
-            // Dark/native: only undo OUR pin (tracked via __ytmNavPinned). A blind
-            // removeProperty would strip YT's own inline dark background here.
-            if (!light) { if (el.__ytmNavPinned) { el.style.removeProperty('background'); el.style.removeProperty('animation'); el.__ytmNavPinned = false; } return; }
+            // Dark/native: undo ONLY our pin. Remove background only if it still holds our
+            // pinned value (YT may have rewritten it since), and never touch 'animation' —
+            // we cancel WAAPI animations below, we never set an inline animation, so removing
+            // it would strip YT's own.
+            if (!light) {
+                if (el.__ytmNavPinned && el.style.getPropertyValue('background').indexOf('243, 243, 243') >= 0) el.style.removeProperty('background');
+                el.__ytmNavPinned = false;
+                return;
+            }
             // YT animates this element's colour via the Web Animations API, which
             // outranks even inline !important — cancel those, then pin the fixed light
             // surface (a constant, since YT poisons our --ytmusic-* primitives here).
