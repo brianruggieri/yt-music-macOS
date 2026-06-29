@@ -47,6 +47,8 @@ extension ImportCoordinator.Phase {
 /// Task 11 wires this into the app; this file is UI-only.
 struct ImportSheet: View {
 	@ObservedObject var coordinator: ImportCoordinator
+	/// Called when the user taps Done after a successful import (used to refresh YT Music).
+	var onFinishImport: () -> Void = {}
 	@Environment(\.dismiss) private var dismiss
 
 	var body: some View {
@@ -70,7 +72,7 @@ struct ImportSheet: View {
 			case .importing:
 				MatchingView(coordinator: coordinator, isImporting: true)
 			case .done:
-				DoneView(coordinator: coordinator, onDismiss: { dismiss() })
+				DoneView(coordinator: coordinator, onDismiss: { dismiss() }, onFinishImport: onFinishImport)
 			}
 		}
 		.frame(width: 600, height: 520)

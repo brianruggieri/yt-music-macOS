@@ -44,7 +44,12 @@ struct ContentView: View {
         }
         .sheet(isPresented: $importLauncher.isPresented) {
             if let coordinator = importCoordinator {
-                ImportSheet(coordinator: coordinator)
+                // onFinishImport reloads YT Music so the imported playlist appears in its
+                // sidebar (YTM doesn't re-fetch its guide after our external InnerTube write).
+                // Bound to the Done button on the import-complete panel, not the generic close.
+                ImportSheet(coordinator: coordinator, onFinishImport: {
+                    webViewModel.webView?.reload()
+                })
             }
         }
         .onChange(of: importLauncher.isPresented) { _, presented in
@@ -53,12 +58,6 @@ struct ContentView: View {
                 coordinator.resetForPresentation()
             } else {
                 coordinator.cancel()  // stop any in-flight matching/import when sheet closes
-                // YT Music doesn't re-fetch its guide after our external InnerTube write,
-                // so the new playlist won't show in its sidebar until a reload. Reload only
-                // when something was actually imported, to avoid a needless playback interruption.
-                if coordinator.report.imported > 0 {
-                    webViewModel.webView?.reload()
-                }
             }
         }
         .onChange(of: importLauncher.isDiagnosticPresented) { _, presented in

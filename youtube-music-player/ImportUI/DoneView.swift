@@ -3,6 +3,8 @@ import SwiftUI
 struct DoneView: View {
 	@ObservedObject var coordinator: ImportCoordinator
 	let onDismiss: () -> Void
+	/// Refresh YT Music (reload webview) so the imported playlist shows in its sidebar.
+	var onFinishImport: () -> Void = {}
 
 	@State private var isExpanded = false
 
@@ -109,7 +111,10 @@ struct DoneView: View {
 					.buttonStyle(.plain)
 					.foregroundStyle(.secondary)
 				Spacer()
-				ImportCTAButton(title: "Done", systemImage: "checkmark", action: onDismiss)
+				ImportCTAButton(title: "Done", systemImage: "checkmark") {
+					if coordinator.report.imported > 0 { onFinishImport() }
+					onDismiss()
+				}
 			}
 			.padding(.horizontal, 20)
 			.padding(.vertical, 14)
