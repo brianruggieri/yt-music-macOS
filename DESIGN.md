@@ -200,6 +200,39 @@ npm run report                             # screenshots + diffs + contrast logs
 - Commit baselines in `harness/snapshots/` — they're the canary for a YT redesign
   that breaks the theme.
 
+## Performance — why nav latency is not ours to win (don't re-litigate)
+
+SPA navigation to a cold page (e.g. Explore) measures ~500ms "time until all text is
+dark." That number is **YT's content load (network + ~11k-node render), not the engine.**
+Measured decomposition:
+
+| Measure | Value |
+|---|---|
+| Theming lag *beyond* content render | **~0ms** (we darken text as it appears) |
+| One full-DOM style read (the audit walk) | ~34ms over ~11k nodes |
+| Cached re-navigation (content already present) | ~10ms total |
+
+We can't theme text before YT renders it. The only path to instant cold nav is the
+*site* owning the theme (a CSS-variable flip); we are an external layer injected into an
+app we don't control, so YT's render time is the floor. This is the same constraint —
+and the same architecture — as Dark Reader: **static CSS injection** (cascade, 0 lag,
+handles the bulk incl. secondary text via the `keepAlpha` color rules) **+ a dynamic
+per-element pass** for the inline/JS-set tail.
+
+What keeps the dynamic pass from lagging or costing too much:
+- **Throttle, not debounce** (`schedule()`): YT streams content as a continuous mutation
+  burst; a debounce defers forever and leaves the page un-themed. Throttling themes
+  content as it lands (~300ms ceiling during a burst).
+- **Re-arm on URL change** (`tick()`): a page navigated-to after backoff re-audits at full
+  cadence immediately.
+- **Adaptive backoff**: once stable, audits drop to every 6th tick (near-zero idle cost).
+
+**Do not chase the ~500ms.** It is content load, not theming. The only remaining engine
+optimization is converting the audit to incremental `MutationObserver`-scoped processing
+(theme only newly-added nodes) — but that is a **CPU/cleanliness win, not a latency win**
+(latency is already ~0 beyond content render). Reach for it only if profiling shows real
+CPU pain during heavy scrolling; otherwise it is complexity for an imperceptible number.
+
 ## Definition of done for any light-mode change
 
 1. `npm test -- --project=light` is green (no text contrast failures).
