@@ -197,14 +197,19 @@ enum LightThemeEngine {
             // inversion can't reach — white-on-#DEDEDE is 1.35:1 (fails WCAG 1.4.11). Pin
             // them dark, the same way the account menu's icons are handled just above.
             ['ytmusic-menu-popup-renderer yt-icon, ytmusic-menu-popup-renderer svg', 'color: rgb(20, 20, 20); fill: rgb(20, 20, 20)'],
-            // Play buttons are the brand mark in light mode: EVERY filled play circle is
-            // YT red (#ff0033) with a white triangle — the header CTA, the sidebar/playlist
-            // hover buttons, inline rows. Matches the logo's play-button glyph, so red
-            // reads consistently as "play" everywhere. White-on-#ff0033 is ~4:1 → clears
-            // the 3:1 bar for the glyph. (Transport play/pause in the player bar is a
-            // different element, tp-yt-paper-icon-button, and stays neutral.)
-            ['ytmusic-play-button-renderer', 'background-color: #ff0033'],
-            ['ytmusic-play-button-renderer yt-icon, ytmusic-play-button-renderer svg', 'color: #ffffff; fill: #ffffff'],
+            // Default for every play button: keep the triangle dark so the glyph stays
+            // visible on a light circle (YT's knockout reads as near-white on near-white
+            // otherwise). Overlay play buttons that sit ON album/video art keep this
+            // neutral look — a red fill there turns into a red square over the art.
+            ['ytmusic-play-button-renderer yt-icon, ytmusic-play-button-renderer svg', 'color: rgb(3, 3, 3); fill: rgb(3, 3, 3)'],
+            // Brand red, white triangle — ONLY the standalone circular play affordances:
+            // the page header CTA and the left-bar (guide) playlist buttons. These are
+            // real circular buttons, so a #f03 fill reads as a proper brand play button.
+            // More specific than the knockout above, so the white glyph wins there.
+            ['ytmusic-responsive-header-renderer ytmusic-play-button-renderer, ytmusic-detail-header-renderer ytmusic-play-button-renderer, ytmusic-guide-entry-renderer ytmusic-play-button-renderer',
+                'background-color: #ff0033'],
+            ['ytmusic-responsive-header-renderer ytmusic-play-button-renderer yt-icon, ytmusic-responsive-header-renderer ytmusic-play-button-renderer svg, ytmusic-detail-header-renderer ytmusic-play-button-renderer yt-icon, ytmusic-detail-header-renderer ytmusic-play-button-renderer svg, ytmusic-guide-entry-renderer ytmusic-play-button-renderer yt-icon, ytmusic-guide-entry-renderer ytmusic-play-button-renderer svg',
+                'color: #ffffff; fill: #ffffff'],
         ];
 
         // Light-mode polish (tunable). The page's own top gradient is handled by the

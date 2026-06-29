@@ -97,11 +97,13 @@ In light mode it appears in exactly three contexts. Everywhere else stays neutra
 - Selected sidebar / nav item: a `#FF0033` leading indicator bar or dot (the label
   text stays near-black for legibility; red is the *marker*, not the *word*).
 
-### 2. Play buttons — the brand mark
-- **Every** filled play circle (`ytmusic-play-button-renderer`) is a `#FF0033` circle
-  with a white triangle — header CTA, sidebar/playlist hover buttons, inline rows.
-  It mirrors the logo's play glyph, so red consistently means "play" across the app.
+### 2. Play buttons — the standalone circular ones
+- The **page header CTA** and the **left-bar (guide) playlist** play buttons are
+  `#FF0033` circles with a white triangle, mirroring the logo's play glyph.
   White-on-red is ~4:1, clears 3:1 for the glyph.
+- **Not** the play buttons overlaid on album/video art — those are square overlays on
+  artwork, where a red fill reads as a red box over the image. They keep YT's neutral
+  knockout (dark triangle). Red is reserved for the standalone circular affordances.
 - Transport play/pause in the player bar is a different element
   (`tp-yt-paper-icon-button`) and stays neutral near-black.
 
