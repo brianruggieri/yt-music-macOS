@@ -292,7 +292,11 @@ struct YouTubeMusicWebView: NSViewRepresentable {
             } else if message.name == "theme",
                       let body = message.body as? [String: Any],
                       let r = body["r"] as? Int, let g = body["g"] as? Int, let b = body["b"] as? Int {
-                let color = NSColor(srgbRed: CGFloat(r) / 255.0, green: CGFloat(g) / 255.0, blue: CGFloat(b) / 255.0, alpha: 1.0)
+                // Clamp page-supplied channels to 0...255 before handing them to AppKit. The
+                // page (music.youtube.com) is trusted, but a compromised/injected page must
+                // not be able to push out-of-range components into NSColor / the native header.
+                let cr = max(0, min(255, r)), cg = max(0, min(255, g)), cb = max(0, min(255, b))
+                let color = NSColor(srgbRed: CGFloat(cr) / 255.0, green: CGFloat(cg) / 255.0, blue: CGFloat(cb) / 255.0, alpha: 1.0)
                 Task { @MainActor in
                     self.viewModel.headerColor = color
                 }
