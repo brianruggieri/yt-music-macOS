@@ -94,8 +94,10 @@ In light mode it appears in exactly three contexts. Everywhere else stays neutra
 - Progress / scrubber **fill** → YouTube Red `#FF0033` (already brand-hued; keep it).
 - Playing-track **equalizer bars** and the **now-playing dot** → `#FF0033`.
 - Now-playing **track title text** → Red Ink `#CC0029` (it's text → text-safe red).
-- Selected sidebar / nav item: a `#FF0033` leading indicator bar or dot (the label
-  text stays near-black for legibility; red is the *marker*, not the *word*).
+- Selected sidebar / nav item: a **6px** `#FF0033` left marker (the label text stays
+  near-black; red is the *marker*, not the *word*). 6px deliberately matches YT's own
+  thicker colored-left-edge convention (its mood/genre buttons use a 6px `border-left`),
+  so "this section/category" reads consistently across the app.
 
 ### 2. Play buttons — the standalone circular ones
 - The **page header CTA** and the **left-bar (guide) playlist** play buttons are
@@ -148,6 +150,10 @@ glow; light needs shadow + edges).
 - **Unselected category chips**: outlined pills (subtle fill + `rgba(0,0,0,0.22)`
   border) so they read as buttons; the **selected** chip keeps YT's filled style, so
   selected vs. unselected stays obvious.
+- **Navigation buttons** (Explore destinations, mood/genre buttons): YT fills these with
+  a translucent *white* (`rgba(255,255,255,0.15)`) that's invisible on a light page, so we
+  give them a defined card — a subtle `rgba(0,0,0,0.04)` fill plus a 1px **inset ring**
+  (box-shadow, not a border, so it never fights the genre color's 6px `border-left`).
 - **Cards that match the page too closely** get a `rgba(0,0,0,0.12)` border injected
   at runtime (1.4.11 surface contrast).
 

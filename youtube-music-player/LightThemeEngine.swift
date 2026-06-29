@@ -235,6 +235,15 @@ enum LightThemeEngine {
             // filled style, so selected vs unselected stays clear.
             ['ytmusic-chip-cloud-chip-renderer:not([is-selected]) a.yt-simple-endpoint',
                 'background-color: rgba(0,0,0,0.04); border: 1px solid rgba(0,0,0,0.22)'],
+            // Explore destination buttons (New releases / Charts / …) and the mood/genre
+            // buttons: their surface is a translucent WHITE (rgba(255,255,255,0.15)) that
+            // the inverter leaves alone, so on the light page it's invisible — the button
+            // has no boundary (genre buttons show only their coloured left edge floating).
+            // Give them a defined card: a subtle fill + a 1px inset hairline RING. The ring
+            // is a box-shadow, not a border, so it never fights the genre colour's 6px
+            // border-left, which we keep as YT's category cue.
+            ['button.ytmusic-navigation-button-renderer',
+                'background-color: rgba(0,0,0,0.04); box-shadow: inset 0 0 0 1px rgba(0,0,0,0.16)'],
         ];
 
         // Brand red, used on purpose in a FEW active/hover places so it keeps meaning
@@ -252,8 +261,10 @@ enum LightThemeEngine {
             // Active/playing — a red left marker on the selected sidebar (guide) item.
             // The label text stays near-black for legibility; red is the marker, not the
             // word. The app uses the guide drawer (no pivot bar); active entry carries
-            // the empty `active` attribute.
-            ['ytmusic-guide-entry-renderer[active] tp-yt-paper-item', 'box-shadow: inset 3px 0 0 0 #ff0033'],
+            // the empty `active` attribute. 6px to match YT's own thicker coloured-left-edge
+            // convention (the mood/genre buttons use a 6px border-left) for a consistent
+            // "this category/section" identity across the app.
+            ['ytmusic-guide-entry-renderer[active] tp-yt-paper-item', 'box-shadow: inset 6px 0 0 0 #ff0033'],
             // Hover/active accent — the selected player-page tab gets a Red Ink underline.
             ['tp-yt-paper-tab.iron-selected', 'border-bottom: 2px solid #cc0029'],
             // Hover/active accent — content link hover reads Red Ink (scoped to list/shelf
