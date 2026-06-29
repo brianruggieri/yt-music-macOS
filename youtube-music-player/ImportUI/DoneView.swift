@@ -111,14 +111,16 @@ struct DoneView: View {
 					.buttonStyle(.plain)
 					.foregroundStyle(.secondary)
 				Spacer()
-				ImportCTAButton(title: "Done", systemImage: "checkmark", action: onDismiss)
+				ImportCTAButton(title: "Done", systemImage: "checkmark") {
+					// Refresh YT Music on Done (not on appear) — the import write needs a
+					// moment to propagate to YTM's backend guide before a reload shows it.
+					if coordinator.report.imported > 0 { onFinishImport() }
+					onDismiss()
+				}
 			}
 			.padding(.horizontal, 20)
 			.padding(.vertical, 14)
 		}
-		// Refresh YT Music as soon as the import-complete panel appears (before the
-		// user taps Done), so the new playlist is already in the sidebar on close.
-		.onAppear { if coordinator.report.imported > 0 { onFinishImport() } }
 	}
 
 	private func summaryItem(count: Int, label: String, icon: String, color: Color) -> some View {
