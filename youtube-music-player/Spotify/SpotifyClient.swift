@@ -12,17 +12,19 @@ final class SpotifyClient {
 	// MARK: - Public API
 
 	func playlists() async throws -> [SpotifyPlaylist] {
-		// In Spotify Dev Mode only the user's OWN playlists are readable: editorial /
-		// algorithmic (owner "spotify") and other users' followed playlists return 403
-		// on item read. Filter to playlists this user owns so the list only shows
-		// importable ones.
+		// Show playlists the user can actually import: ones they OWN, plus
+		// COLLABORATIVE playlists they contribute to (readable via the
+		// playlist-read-collaborative scope). Editorial/algorithmic (owner
+		// "spotify") and other users' followed playlists 403 on item read and are
+		// excluded; any collaborative one that still 403s is handled by the
+		// per-playlist graceful skip in startMatching().
 		let myID = try await currentUserID()
 		var url: URL? = URL(string: "\(SpotifyConfig.apiBase)/me/playlists?limit=50")
 		var results: [SpotifyPlaylist] = []
 		while let current = url {
 			let page: PlaylistPage = try await get(url: current)
 			results += page.items.compactMap(\.value)
-				.filter { $0.ownerID == myID }
+				.filter { $0.ownerID == myID || $0.collaborative }
 				.map { SpotifyPlaylist(id: $0.id, name: $0.name, trackCount: $0.trackCount) }
 			url = page.next.flatMap(URL.init)
 		}
@@ -132,8 +134,9 @@ private struct PlaylistItem: Decodable {
 	let name: String
 	let trackCount: Int
 	let ownerID: String?
+	let collaborative: Bool
 
-	private enum CodingKeys: String, CodingKey { case id, name, tracks, items, owner }
+	private enum CodingKeys: String, CodingKey { case id, name, tracks, items, owner, collaborative }
 	private struct CountObj: Decodable { let total: Int }
 	private struct Owner: Decodable { let id: String? }
 
@@ -148,6 +151,7 @@ private struct PlaylistItem: Decodable {
 			?? (try? c.decode(CountObj.self, forKey: .tracks))
 		trackCount = count?.total ?? 0
 		ownerID = (try? c.decode(Owner.self, forKey: .owner))?.id
+		collaborative = (try? c.decode(Bool.self, forKey: .collaborative)) ?? false
 	}
 }
 
