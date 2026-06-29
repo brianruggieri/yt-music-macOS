@@ -11,6 +11,11 @@ struct ReviewView: View {
 		coordinator.autoAcceptedCount + coordinator.needsReview.filter { $0.chosen != nil }.count
 	}
 
+	/// Review items the user hasn't accepted/skipped yet.
+	private var unresolvedCount: Int {
+		coordinator.needsReview.filter { !coordinator.resolvedReviewIDs.contains($0.track.id) }.count
+	}
+
 	var body: some View {
 		VStack(spacing: 0) {
 			// Summary bar
@@ -20,10 +25,10 @@ struct ReviewView: View {
 					.font(.subheadline)
 				Text("\(coordinator.autoAcceptedCount) matched automatically")
 					.font(.subheadline)
-				if !coordinator.needsReview.isEmpty {
+				if unresolvedCount > 0 {
 					Text("·")
 						.foregroundStyle(.tertiary)
-					Text("\(coordinator.needsReview.count) to review")
+					Text("\(unresolvedCount) to review")
 						.font(.subheadline)
 						.foregroundStyle(.secondary)
 				}
@@ -35,14 +40,17 @@ struct ReviewView: View {
 
 			Divider()
 
-			if coordinator.needsReview.isEmpty {
+			if unresolvedCount == 0 {
 				emptyReviewState
 			} else {
 				List {
 					ForEach($coordinator.needsReview) { $result in
-						ReviewRow(result: $result, coordinator: coordinator)
-							.listRowBackground(Color.ytSurf.opacity(0.5))
-							.listRowSeparator(.visible)
+						// Hide rows the user has already accepted/skipped.
+						if !coordinator.resolvedReviewIDs.contains(result.track.id) {
+							ReviewRow(result: $result, coordinator: coordinator)
+								.listRowBackground(Color.ytSurf.opacity(0.5))
+								.listRowSeparator(.visible)
+						}
 					}
 				}
 				.listStyle(.inset)
@@ -179,7 +187,7 @@ private struct ReviewRow: View {
 		Menu {
 			if let best = result.candidates.first {
 				Button {
-					result.chosen = best
+					result.chosen = best; coordinator.markReviewed(result.track.id)
 					isSearching = false
 				} label: {
 					Label("Accept \"\(best.title)\"", systemImage: "checkmark")
@@ -190,7 +198,7 @@ private struct ReviewRow: View {
 					// Alternates: show up to 5, skipping the first (already shown as Accept)
 					ForEach(Array(result.candidates.dropFirst().prefix(4))) { candidate in
 						Button {
-							result.chosen = candidate
+							result.chosen = candidate; coordinator.markReviewed(result.track.id)
 							isSearching = false
 						} label: {
 							let artist = candidate.artists.first ?? ""
@@ -216,7 +224,7 @@ private struct ReviewRow: View {
 
 			// Skip — set chosen to nil
 			Button(role: .destructive) {
-				result.chosen = nil
+				result.chosen = nil; coordinator.markReviewed(result.track.id)
 				isSearching = false
 			} label: {
 				Label("Skip this track", systemImage: "xmark.circle")
@@ -275,7 +283,7 @@ private struct ReviewRow: View {
 			} else {
 				ForEach(Array(filteredCandidates.prefix(4))) { candidate in
 					Button {
-						result.chosen = candidate
+						result.chosen = candidate; coordinator.markReviewed(result.track.id)
 						isSearching = false
 						searchText = ""
 					} label: {

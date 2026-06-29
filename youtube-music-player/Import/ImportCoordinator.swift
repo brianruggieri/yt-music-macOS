@@ -29,6 +29,8 @@ final class ImportCoordinator: ObservableObject {
     @Published var includeLiked = false
     @Published var progress: Double = 0
     @Published var needsReview: [MatchResult] = []
+    /// Track IDs the user has resolved (accepted/skipped) in review — hidden from the list.
+    @Published var resolvedReviewIDs: Set<String> = []
     @Published var autoAcceptedCount = 0
     @Published var report = ImportReport()
     @Published var errorMessage: String?
@@ -68,6 +70,7 @@ final class ImportCoordinator: ObservableObject {
         cancelled = false
         isYTMusicSignedIn = true
         needsReview = []
+        resolvedReviewIDs = []
         report = ImportReport()
         errorMessage = nil
         progress = 0
@@ -83,6 +86,12 @@ final class ImportCoordinator: ObservableObject {
         } else {
             phase = .connect
         }
+    }
+
+    /// Mark a review row resolved (accepted or skipped) so it's hidden from the list.
+    /// The chosen value stays on the MatchResult in `needsReview` for import accounting.
+    func markReviewed(_ trackID: String) {
+        resolvedReviewIDs.insert(trackID)
     }
 
     /// Opens Spotify OAuth. Moves to .pickSources on success.
@@ -125,6 +134,7 @@ final class ImportCoordinator: ObservableObject {
         phase = .matching
         progress = 0
         needsReview = []
+        resolvedReviewIDs = []
         autoAcceptedCount = 0
         allMatches = [:]
         importSources = []
