@@ -305,44 +305,23 @@ final class ImportCoordinator: ObservableObject {
                 continue
             }
 
-            let playlistID: String
+            // Create the playlist WITH its tracks in one atomic call. Adding to a
+            // freshly-created empty playlist via a separate browse/edit_playlist
+            // returns 409 ABORTED, so the matched videos go in at creation time.
+            // ponytail: very large playlists may exceed the create call's videoIds
+            // limit; chunked create + edit can be added later if it becomes a problem.
             do {
-                playlistID = try await withRetry {
-                    try await ytClient.createPlaylist(title: source.label, privacy: "PRIVATE")
+                _ = try await withRetry {
+                    try await ytClient.createPlaylist(title: source.label, privacy: "PRIVATE", videoIDs: videoIDs)
                 }
+                guard gen == runGeneration else { break }
+                report.imported += videoIDs.count
             } catch {
                 guard gen == runGeneration else { break }
                 report.failed.append(ImportFailure(
                     track: nil,
                     reason: "Create \"\(source.label)\": \(error.localizedDescription)"))
                 continue
-            }
-
-            // Add in batches of 25
-            // ponytail: 25 is conservative; increase if YTM allows larger undocumented batches
-            let batchSize = 25
-            var offset = 0
-            while offset < videoIDs.count {
-                guard !cancelled, gen == runGeneration else { break }
-                let batch = Array(videoIDs[offset..<min(offset + batchSize, videoIDs.count)])
-                offset += batchSize
-                do {
-                    let (added, failed) = try await withRetry {
-                        try await ytClient.addItems(playlistID: playlistID, videoIDs: batch)
-                    }
-                    guard gen == runGeneration else { break }
-                    report.imported += added.count
-                    for vid in failed {
-                        report.failed.append(ImportFailure(
-                            track: nil,
-                            reason: "\(vid) failed in \"\(source.label)\""))
-                    }
-                } catch {
-                    guard gen == runGeneration else { break }
-                    report.failed.append(ImportFailure(
-                        track: nil,
-                        reason: "Batch add to \"\(source.label)\": \(error.localizedDescription)"))
-                }
             }
         }
 

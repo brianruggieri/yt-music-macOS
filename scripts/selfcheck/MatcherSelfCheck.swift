@@ -18,6 +18,8 @@ import Foundation
         let none = Matcher.match(base, candidates:[]); assert(none.confidence == .none && none.chosen == nil)
         // Radio Edit is a real version marker -> must NOT match base track at .high (regression: fix for over-stripping)
         assert(Matcher.match(base, candidates:[song("Chaise Longue (Radio Edit)","Wet Leg",197500,nil)]).confidence == .low)
+        // duration ABSENT (YTM search omits it) -> title+artist+song still qualifies as high
+        assert(Matcher.match(base, candidates:[YTMCandidate(videoId:"x",title:"Chaise Longue",artists:["Wet Leg"],album:nil,durationMs:nil,resultType:.song,videoType:nil)]).confidence == .high)
         print("Matcher self-check PASS")
     }
 }

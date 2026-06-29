@@ -19,24 +19,15 @@ enum YTMusicDiagnostic {
 	// ponytail: replace with any stable video ID if this ever gets deleted
 	static let preflightVideoID = "dQw4w9WgXcQ"
 
-	/// Create a private playlist, add one video, then delete it.
-	/// Returns .success only if all three steps succeed; .failure names the failing step.
+	/// Create a private playlist WITH one video (the same atomic path the import
+	/// uses), then delete it. Returns .success only if both steps succeed.
 	static func runWritePreflight(_ client: YTMusicClient) async -> Result<Void, Error> {
 		let playlistId: String
 		do {
-			playlistId = try await client.createPlaylist(title: "_import-preflight", privacy: "PRIVATE")
+			playlistId = try await client.createPlaylist(
+				title: "_import-preflight", privacy: "PRIVATE", videoIDs: [preflightVideoID])
 		} catch {
 			return .failure(YTMusicDiagnosticError.createFailed(error))
-		}
-
-		do {
-			let result = try await client.addItems(playlistID: playlistId, videoIDs: [preflightVideoID])
-			if !result.failed.isEmpty {
-				throw YTMusicClientError.missingField("video \(preflightVideoID) not added")
-			}
-		} catch {
-			try? await client.deletePlaylist(playlistId)  // best-effort cleanup
-			return .failure(YTMusicDiagnosticError.addFailed(error))
 		}
 
 		do {

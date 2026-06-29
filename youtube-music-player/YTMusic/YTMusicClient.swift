@@ -33,12 +33,17 @@ final class YTMusicClient {
 		return parseSearch(resp)
 	}
 
-	func createPlaylist(title: String, privacy: String) async throws -> String {
-		let resp = try await post(endpoint: "playlist/create", body: [
+	func createPlaylist(title: String, privacy: String, videoIDs: [String] = []) async throws -> String {
+		var body: [String: Any] = [
 			"title": title,
 			"description": "",
 			"privacyStatus": privacy
-		])
+		]
+		// Add the initial tracks atomically at creation (matches ytmusicapi's
+		// create_playlist(video_ids:)). A separate edit_playlist on a fresh empty
+		// playlist returns 409 ABORTED.
+		if !videoIDs.isEmpty { body["videoIds"] = videoIDs }
+		let resp = try await post(endpoint: "playlist/create", body: body)
 		guard let id = resp["playlistId"] as? String, !id.isEmpty else {
 			throw YTMusicClientError.missingField("playlistId")
 		}
@@ -119,8 +124,16 @@ final class YTMusicClient {
 		let sections = sectionList(from: resp)
 		var out: [YTMCandidate] = []
 		for section in sections {
-			guard let shelf = section["musicShelfRenderer"] as? [String: Any],
-				  let items = shelf["contents"] as? [[String: Any]] else { continue }
+			// Top-result card (newer search format puts the best hit here).
+			if let card = section["musicCardShelfRenderer"] as? [String: Any],
+			   let candidate = parseCard(card) {
+				out.append(candidate)
+			}
+			// Items live under musicShelfRenderer (classic) OR itemSectionRenderer
+			// (current format) — both wrap musicResponsiveListItemRenderer in "contents".
+			let container = (section["musicShelfRenderer"] as? [String: Any])
+				?? (section["itemSectionRenderer"] as? [String: Any])
+			guard let items = container?["contents"] as? [[String: Any]] else { continue }
 			for item in items {
 				guard let mrlir = item["musicResponsiveListItemRenderer"] as? [String: Any],
 					  let candidate = parseItem(mrlir) else { continue }
@@ -128,6 +141,29 @@ final class YTMusicClient {
 			}
 		}
 		return out
+	}
+
+	/// Parse the "top result" card (musicCardShelfRenderer) — distinct shape from MRLIR.
+	private func parseCard(_ card: [String: Any]) -> YTMCandidate? {
+		let watchEp = (card["onTap"] as? [String: Any])?.typed("watchEndpoint")
+		guard let videoId = watchEp?["videoId"] as? String else { return nil }
+		let videoType = watchEp?
+			.typed("watchEndpointMusicSupportedConfigs")?
+			.typed("watchEndpointMusicConfig")
+			.flatMap { $0["musicVideoType"] as? String }
+		let title = ((card["title"] as? [String: Any])?["runs"] as? [[String: Any]])?
+			.first?["text"] as? String ?? ""
+		guard !title.isEmpty else { return nil }
+		var artists: [String] = []
+		let subRuns = (card["subtitle"] as? [String: Any])?["runs"] as? [[String: Any]] ?? []
+		for r in subRuns {
+			let bid = (r["navigationEndpoint"] as? [String: Any])?
+				.typed("browseEndpoint")?["browseId"] as? String
+			if let bid, bid.hasPrefix("UC"), let t = r["text"] as? String { artists.append(t) }
+		}
+		return YTMCandidate(videoId: videoId, title: title, artists: artists, album: nil,
+							durationMs: nil, resultType: classifyResult(itemBrowseId: nil, videoType: videoType),
+							videoType: videoType)
 	}
 
 	private func sectionList(from resp: [String: Any]) -> [[String: Any]] {

@@ -23,7 +23,10 @@ enum Matcher {
 			let titleOK  = cTitle == normTitle
 			let artistOK = cArtist == normArtist
 			let durDiff  = c.durationMs.map { abs($0 - track.durationMs) } ?? Int.max
-			let durOK    = durDiff <= 2000
+			// Duration confirms when present (YTM search often omits it). Absent
+			// duration does NOT block high — title+artist+song still qualifies;
+			// a PRESENT duration off by >2s disqualifies (catches wrong versions).
+			let durOK    = c.durationMs.map { abs($0 - track.durationMs) <= 2000 } ?? true
 			let albumMatch = c.album.map { TextNormalize.normalize($0) } == trackAlbum
 
 			let tier: Int

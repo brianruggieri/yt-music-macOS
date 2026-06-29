@@ -16,8 +16,8 @@ final class SpotifyClient {
 		var results: [SpotifyPlaylist] = []
 		while let current = url {
 			let page: PlaylistPage = try await get(url: current)
-			results += page.items.map {
-				SpotifyPlaylist(id: $0.id, name: $0.name, trackCount: $0.tracks.total)
+			results += page.items.compactMap(\.value).map {
+				SpotifyPlaylist(id: $0.id, name: $0.name, trackCount: $0.trackCount)
 			}
 			url = page.next.flatMap(URL.init)
 		}
@@ -25,7 +25,10 @@ final class SpotifyClient {
 	}
 
 	func tracks(playlistID: String) async throws -> [SpotifyTrack] {
-		var url: URL? = URL(string: "\(SpotifyConfig.apiBase)/playlists/\(playlistID)/tracks?limit=100")
+		// Use /items (Spotify's current Get-Playlist-Items endpoint, per the
+		// `items.href` in the playlist object). The legacy /tracks path now
+		// returns 403 for newly-created apps.
+		var url: URL? = URL(string: "\(SpotifyConfig.apiBase)/playlists/\(playlistID)/items?limit=50")
 		var results: [SpotifyTrack] = []
 		while let current = url {
 			let page: TrackPage = try await get(url: current)
@@ -80,27 +83,54 @@ final class SpotifyClient {
 			return try await get(url: url, attempt: attempt + 1)
 		}
 		guard (200..<300).contains(http.statusCode) else {
-			throw SpotifyClientError.httpError(http.statusCode)
+			let body = String(data: data, encoding: .utf8) ?? ""
+			throw SpotifyClientError.httpError(http.statusCode, body)
 		}
-		return try JSONDecoder().decode(T.self, from: data)
+		do {
+			return try JSONDecoder().decode(T.self, from: data)
+		} catch {
+			// Surface WHICH type failed and the decoder's coding-path detail
+			// instead of the useless generic "data couldn't be read" message.
+			throw SpotifyClientError.decodingFailed(String(describing: T.self), String(describing: error))
+		}
 	}
+}
+
+/// Decodes `T`, but yields `nil` instead of throwing on a malformed/null array
+/// element — lets one bad item be skipped without aborting the whole page.
+private struct FailableDecodable<T: Decodable>: Decodable {
+	let value: T?
+	init(from decoder: Decoder) throws { value = try? T(from: decoder) }
 }
 
 // MARK: - Codable response types
 
 private struct PlaylistPage: Decodable {
-	let items: [PlaylistItem]
+	// Spotify can return null/partial playlist entries (e.g. a playlist owned by
+	// a deleted account). Decode leniently so one bad entry doesn't fail the page.
+	let items: [FailableDecodable<PlaylistItem>]
 	let next: String?
 }
 
 private struct PlaylistItem: Decodable {
 	let id: String
 	let name: String
-	let tracks: TrackCount
-}
+	let trackCount: Int
 
-private struct TrackCount: Decodable {
-	let total: Int
+	private enum CodingKeys: String, CodingKey { case id, name, tracks, items }
+	private struct CountObj: Decodable { let total: Int }
+
+	init(from decoder: Decoder) throws {
+		let c = try decoder.container(keyedBy: CodingKeys.self)
+		id = try c.decode(String.self, forKey: .id)
+		name = try c.decode(String.self, forKey: .name)
+		// Spotify now returns the playlist's track-count summary under "items"
+		// (dedicated endpoint /playlists/{id}/items); older shape used "tracks".
+		// Accept either; default 0 if absent. Count is display-only.
+		let count = (try? c.decode(CountObj.self, forKey: .items))
+			?? (try? c.decode(CountObj.self, forKey: .tracks))
+		trackCount = count?.total ?? 0
+	}
 }
 
 private struct TrackPage: Decodable {
@@ -117,10 +147,14 @@ private struct TrackItem: Decodable {
 	// ponytail: if Spotify adds new non-track item types, this handles them too
 	init(from decoder: Decoder) throws {
 		let c = try decoder.container(keyedBy: CodingKeys.self)
-		track = try? c.decode(TrackObject.self, forKey: .track)
+		// The /items endpoint nests the track/episode under "item"; the legacy
+		// /tracks endpoint and /me/tracks use "track". Try both. TrackObject
+		// decode fails for episodes (no artists) → nil → skipped by mapTrackItem.
+		track = (try? c.decode(TrackObject.self, forKey: .item))
+			?? (try? c.decode(TrackObject.self, forKey: .track))
 	}
 
-	private enum CodingKeys: String, CodingKey { case track }
+	private enum CodingKeys: String, CodingKey { case item, track }
 }
 
 private struct TrackObject: Decodable {
@@ -146,7 +180,19 @@ private struct ExternalIds: Decodable {
 
 // MARK: - Errors
 
-enum SpotifyClientError: Error {
+enum SpotifyClientError: LocalizedError {
 	case unexpectedResponse
-	case httpError(Int)
+	case httpError(Int, String)
+	case decodingFailed(String, String)
+
+	var errorDescription: String? {
+		switch self {
+		case .unexpectedResponse:
+			return "Spotify returned an unexpected response."
+		case .httpError(let code, let body):
+			return "Spotify request failed (HTTP \(code)). \(body.prefix(300))"
+		case .decodingFailed(let type, let detail):
+			return "Couldn't parse Spotify \(type): \(detail.prefix(400))"
+		}
+	}
 }
