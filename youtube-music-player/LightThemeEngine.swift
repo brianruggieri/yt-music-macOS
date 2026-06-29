@@ -114,7 +114,7 @@ enum LightThemeEngine {
 
         // Flip lightness, keep hue+saturation (brand red stays red). Soften the
         // bright end so backgrounds land on a soft off-white, not glaring #fff.
-        function invert(value) {
+        function invert(value, keepAlpha) {
             const c = toRGB(value);
             if (!c) return null;
             const hsl = rgbToHsl(c.r, c.g, c.b);
@@ -125,8 +125,12 @@ enum LightThemeEngine {
             // 0.7 film straight-inverts to a black 0.7 slab over light — too heavy. Thin
             // it by how dark it became so highlights stay subtle. Faint overlays (dividers
             // ~alpha 0.1) are left untouched so borders/separators don't vanish.
+            // keepAlpha bypasses this entirely for TEXT: a white-alpha 0.7 secondary label
+            // must stay ~0.7 (→ a dark grey), not get thinned to near-invisible — damping
+            // is right for background films, fatal for text. This is the cascade-level fix
+            // that keeps secondary text dark everywhere without leaning on the audit.
             let a = c.a;
-            if (a < 1 && a > 0.3) a = Math.round(a * (0.12 + 0.88 * nl) * 1000) / 1000;
+            if (!keepAlpha && a < 1 && a > 0.3) a = Math.round(a * (0.12 + 0.88 * nl) * 1000) / 1000;
             return a < 1 ? 'rgba(' + o.r + ', ' + o.g + ', ' + o.b + ', ' + a + ')'
                          : 'rgb(' + o.r + ', ' + o.g + ', ' + o.b + ')';
         }
@@ -352,7 +356,10 @@ enum LightThemeEngine {
                             else if (hasGradient(v) && hasColor(v)) decls.push(prop + ': ' + invertColorsInString(v));
                         } else if (prop === 'color') {
                             // Direct text colour: only flip washed-out light-grey literals.
-                            if (c && isLightGray(c)) decls.push('color: ' + invert(v));
+                            // keepAlpha: YT's secondary text is translucent white; preserve
+                            // the alpha so it inverts to a dark translucent grey (readable),
+                            // not a near-invisible one — the cascade-level secondary-text fix.
+                            if (c && isLightGray(c)) decls.push('color: ' + invert(v, true));
                         } else if (EDGE_PROPS[prop]) {
                             // dividers / borders / separators / icon strokes
                             if (c) { if (isLightGray(c)) decls.push(prop + ': ' + invert(v)); }
@@ -467,7 +474,10 @@ enum LightThemeEngine {
         // washed-out text in place, and tracks a coverage score. If coverage
         // collapses (a Google redesign the engine can't follow), we fall back to
         // native dark rather than show a half-broken light UI.
-        const AA = 4.5;                  // WCAG AA contrast for normal text
+        const AA = 4.5;                  // WCAG AA contrast for normal text (failure threshold)
+        const READABLE = 7;              // clamp target when we DO darken: aim past the bare
+                                         // floor to match YT's own #555 secondary (~6.5:1),
+                                         // so fixed text reads comfortably dark, not just "legal"
         const fixedEls = new Set();
         let degraded = false;
         let auditCount = 0, lowStreak = 0;   // hysteresis so transient load states don't trip #2
@@ -563,28 +573,13 @@ enum LightThemeEngine {
                 total++;
                 let r = ratio(fgL, bgL);
                 if (r < AA) {
-                    // washed-out light text on a light surface -> darken the text.
-                    if (bgL > 0.5 && fgL > bgL && !fixedEls.has(el)) {
-                        const inv = invert(st.color), ic = inv && toRGB(inv);
-                        if (ic) {
-                            el.style.setProperty('color', inv, 'important');
-                            el.setAttribute('data-ytm-fixed', '1');
-                            fixedEls.add(el);
-                            r = ratio(relLum(ic), bgL);
-                            // inversion got us closer but not to AA -> clamp lightness to guarantee it.
-                            if (r < AA) {
-                                const en = enforceLightness(ic, bgL, AA);
-                                if (en) { el.style.setProperty('color', 'rgb(' + en.r + ', ' + en.g + ', ' + en.b + ')', 'important'); r = ratio(relLum(en), bgL); }
-                            }
-                        }
-                    // dark-ish text whose own value is fine but still fails on a light
-                    // surface (a faint grey caption YT set as a literal that survived
-                    // inversion) -> clamp it down to AA in place.
-                    } else if (bgL > 0.5 && fgL <= bgL && !fixedEls.has(el)) {
-                        // Darken from the COMPOSITED colour (fgC), not the raw rgba — for
-                        // translucent text fgC is the real on-screen grey, so we land on a
-                        // readable mid-grey at AA instead of crushing it to pure black.
-                        const en = enforceLightness(fgC, bgL, AA);
+                    // On a light surface, ANY failing text (washed-light or faint-grey, opaque
+                    // or translucent) gets darkened from its COMPOSITED on-screen colour to a
+                    // SOLID grey at the READABLE target — one path, always opaque, so a
+                    // translucent fix can't re-introduce the invisibility we just removed.
+                    // Fall back to AA if READABLE is unreachable on this surface.
+                    if (bgL > 0.5 && !fixedEls.has(el)) {
+                        const en = enforceLightness(fgC, bgL, READABLE) || enforceLightness(fgC, bgL, AA);
                         if (en && ratio(relLum(en), bgL) > r) {
                             el.style.setProperty('color', 'rgb(' + en.r + ', ' + en.g + ', ' + en.b + ')', 'important');
                             el.setAttribute('data-ytm-fixed', '1');

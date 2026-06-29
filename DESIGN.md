@@ -75,7 +75,7 @@ inline (`PIN_TOKENS`) because YT poisons the semantic tokens from page content.
 | Role | Value | Notes |
 |------|-------|-------|
 | Primary text | ~`#0A0A0A` (near-black) | Inverted from YT's white primitive |
-| Secondary / caption | clamped to **≥4.5:1** (≈`#6F6F6F`) | YT's secondary text is *translucent* white; the audit composites foreground alpha over the background before scoring, then `enforceLightness()` darkens to a solid AA grey. Without the alpha-composite step it reads as solid black and silently fails (the bug that lost artist names). |
+| Secondary / caption | **~7:1** (≈`#525252`) | YT's secondary text is *translucent* white. The cascade fix: `invert()` preserves the alpha for text (`keepAlpha`), so it flips to a dark translucent grey instead of a near-invisible one — fixing it everywhere by cascade, not per-element. The audit is a backstop and clamps any residual to the **READABLE (~7:1)** target, matching YT's own `#555` secondary rather than the bare 4.5 floor. |
 | Focus ring | `#1A73E8` (blue) | **Deliberately not red.** See below. |
 
 **Alpha is not optional.** Any contrast check — engine or harness — MUST composite a
