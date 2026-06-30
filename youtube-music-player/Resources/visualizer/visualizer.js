@@ -316,7 +316,7 @@
             '.av-toggle.milkviz-styled.milkviz-dark>button{color:rgba(255,255,255,0.72) !important;}',
             '.av-toggle.milkviz-styled.milkviz-light>button:hover:not(.milkviz-sel){background:rgba(0,0,0,0.05) !important;}',
             '.av-toggle.milkviz-styled.milkviz-dark>button:hover:not(.milkviz-sel){background:rgba(255,255,255,0.06) !important;}',
-            '.av-toggle.milkviz-styled.milkviz-light>button.milkviz-sel{background:#FFFFFF !important;color:#0A0A0A !important;box-shadow:0 1px 2px rgba(0,0,0,.12) !important;}',
+            '.av-toggle.milkviz-styled.milkviz-light>button.milkviz-sel{background:#FFFFFF !important;color:#0A0A0A !important;}',
             '.av-toggle.milkviz-styled.milkviz-dark>button.milkviz-sel{background:rgba(255,255,255,0.16) !important;color:#FFFFFF !important;}',
             '.av-toggle.milkviz-styled>button:focus-visible{outline:2px solid #1A73E8 !important;outline-offset:1px !important;}',
         ].join('');
@@ -365,6 +365,39 @@
         } finally {
             _syncing = false;
         }
+    }
+
+    // The app's LightThemeEngine repeatedly stamps an inline `border:1px solid
+    // rgba(0,0,0,.12) !important` on each av-toggle button during its contrast audit —
+    // inline !important beats our stylesheet, so light mode shows pill borders that dark
+    // mode doesn't. Force the inline border (and outline) to 0 on every direct child.
+    function killButtonBorders(container) {
+        const c = container || document.querySelector('.av-toggle.milkviz-styled');
+        if (!c) return;
+        Array.from(c.children).forEach(function (el) {
+            el.style.setProperty('border', '0', 'important');
+            el.style.setProperty('outline', '0', 'important');
+        });
+    }
+
+    let _borderObs = null;
+    // Re-kill the engine's border whenever it re-adds it. Re-entry guard: only act when
+    // a real border is actually present, so our own border:0 writes don't loop the observer.
+    function watchSegBorders(container) {
+        if (_borderObs) _borderObs.disconnect();
+        _borderObs = new MutationObserver(function () {
+            const c = document.querySelector('.av-toggle.milkviz-styled');
+            if (!c) return;
+            const hasBorder = Array.from(c.children).some(function (el) {
+                return getComputedStyle(el).borderTopWidth !== '0px';
+            });
+            if (hasBorder) killButtonBorders(c);
+        });
+        _borderObs.observe(container, {
+            attributes: true,
+            attributeFilter: ['style', 'aria-pressed', 'class'],
+            subtree: true,
+        });
     }
 
     // Observe YT flipping song/video aria-pressed (e.g. it re-asserts Song on track
@@ -426,6 +459,8 @@
 
         container.appendChild(btn);   // 3rd child of .av-toggle
         styleSegContainer(container);
+        killButtonBorders(container);   // strip the engine's inline light-mode borders
+        watchSegBorders(container);     // and re-strip them whenever it re-adds them
         watchSegAria(container);
         syncSegState();               // single-active: exactly one .milkviz-sel
         _segInjected = true;
@@ -734,61 +769,65 @@
     }
 
     // --- Task 10: Fullscreen control ---
-    // Button lives on _canvasHost; listener + button torn down on setActive(false).
+    // Replica of YT's video-player hover overlay: a top-down gradient plus a fullscreen
+    // button in the TOP-RIGHT, both fading in only while the pointer is over the canvas
+    // host. Lives on _canvasHost; gradient + button + listener torn down on setActive(false).
 
     let _fsBtn = null;
+    let _fsGradient = null;
     let _fsChangeHandler = null;
 
-    // Corner-bracket fullscreen icon matching YT's native control (used when the live
-    // control can't be cloned). Inherits currentColor so it tracks light/dark text.
+    // Standard "enter fullscreen" glyph — four L-shaped corner brackets, white 2px strokes.
     const FS_ICON_SVG =
-        '<svg viewBox="0 0 36 36" width="20" height="20" fill="currentColor" aria-hidden="true">' +
-        '<path d="M10 16h2v-4h4v-2h-6v6zm14-6h-6v2h4v4h2v-6zm-2 16v-4h-2v6h6v-2h-4zM12 20h-2v6h6v-2h-4v-4z"/>' +
+        '<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="#fff" ' +
+        'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+        '<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>' +
         '</svg>';
+
+    // Hover reveal via CSS so it tracks the real pointer state on the fixed host.
+    // !important beats the elements' inline opacity:0.
+    function injectFsCss() {
+        if (document.getElementById('milkviz-fs-css')) return;
+        const css = document.createElement('style');
+        css.id = 'milkviz-fs-css';
+        css.textContent = [
+            '#milkviz-canvas-host:hover #milkviz-fs-gradient{opacity:1 !important;}',
+            '#milkviz-canvas-host:hover #milkviz-fs-btn{opacity:0.9 !important;}',
+            '#milkviz-fs-btn:hover{opacity:1 !important;}',
+        ].join('');
+        document.head.appendChild(css);
+    }
 
     function addFullscreenControl() {
         if (_fsBtn || !_canvasHost) return;
+        injectFsCss();
 
-        // Reuse YT's NATIVE fullscreen control look by cloning it when present; else a
-        // corner-bracket SVG button. EITHER WAY we enforce an explicit small box below
-        // so a cloned/giant control can never render full-size over the canvas.
-        let btn;
-        const native = document.querySelector('.ytp-fullscreen-button') ||
-            document.querySelector('button[aria-label*="ull screen" i]') ||
-            document.querySelector('[aria-label*="fullscreen" i]');
-        if (native) {
-            btn = native.cloneNode(true);
-            btn.removeAttribute('id');
-            console.log('MilkViz: fullscreen control cloned from native', native.className || native.tagName);
-        } else {
-            btn = document.createElement('button');
-            btn.innerHTML = FS_ICON_SVG;
-            console.log('MilkViz: fullscreen control — replicated corner-bracket SVG (native not found)');
-        }
+        // Top gradient overlaying the canvas (z above it), revealed on host hover.
+        const grad = document.createElement('div');
+        grad.id = 'milkviz-fs-gradient';
+        grad.style.cssText =
+            'position:absolute;top:0;left:0;right:0;height:72px;' +
+            'background:linear-gradient(to bottom, rgba(0,0,0,0.55), rgba(0,0,0,0));' +
+            'opacity:0;transition:opacity .2s ease;pointer-events:none;z-index:2;';
+        _canvasHost.appendChild(grad);
+        _fsGradient = grad;
+
+        // Fullscreen button at the top-right of the host.
+        const btn = document.createElement('button');
         btn.id = 'milkviz-fs-btn';
         btn.title = 'Enter fullscreen';
+        btn.setAttribute('aria-label', 'Enter fullscreen');
+        btn.innerHTML = FS_ICON_SVG;
+        btn.style.cssText =
+            'position:absolute;top:14px;right:18px;width:28px;height:28px;' +
+            'display:flex;align-items:center;justify-content:center;' +
+            'opacity:0;transition:opacity .2s ease;cursor:pointer;pointer-events:auto;' +
+            'z-index:3;border:none;background:transparent;padding:0;';
 
-        // Enforce a small fixed control + icon size (YT-like), regardless of clone.
-        // !important beats any inherited/scoped sizing from the cloned native button.
-        const fixed = [
-            'box-sizing:border-box', 'width:32px', 'height:32px',
-            'min-width:0', 'min-height:0', 'max-width:32px', 'max-height:32px',
-            'padding:6px', 'border:none', 'border-radius:4px', 'background:transparent',
-            'color:#fff', 'cursor:pointer', 'opacity:0.7',
-            'display:inline-flex', 'align-items:center', 'justify-content:center',
-            'position:absolute', 'right:8px', 'bottom:8px', 'top:auto', 'left:auto',
-            'z-index:9999',
-        ];
-        btn.setAttribute('style', fixed.map((d) => d + ' !important').join(';'));
-        // Clamp any inner icon (SVG/img/span) the cloned native button may carry.
-        Array.from(btn.querySelectorAll('svg, img, span')).forEach((el) => {
-            el.style.setProperty('width', '20px', 'important');
-            el.style.setProperty('height', '20px', 'important');
-        });
-        btn.addEventListener('mouseenter', function () { btn.style.setProperty('opacity', '1', 'important'); });
-        btn.addEventListener('mouseleave', function () { btn.style.setProperty('opacity', '0.7', 'important'); });
-
-        btn.addEventListener('click', function () {
+        // Sibling of the canvas, so the capture-phase preset-skip handler's
+        // canvas.contains() check passes it through; stopPropagation is belt-and-braces.
+        btn.addEventListener('click', function (e) {
+            e.stopPropagation();
             if (!document.fullscreenElement) {
                 const req = _canvasHost.requestFullscreen || _canvasHost.webkitRequestFullscreen;
                 if (req) req.call(_canvasHost);
@@ -805,6 +844,7 @@
             if (_fsBtn) {
                 const inFs = !!document.fullscreenElement;
                 _fsBtn.title = inFs ? 'Exit fullscreen' : 'Enter fullscreen';
+                _fsBtn.setAttribute('aria-label', _fsBtn.title);
             }
         };
         document.addEventListener('fullscreenchange', _fsChangeHandler);
@@ -821,6 +861,7 @@
             _fsChangeHandler = null;
         }
         if (_fsBtn) { _fsBtn.remove(); _fsBtn = null; }
+        if (_fsGradient) { _fsGradient.remove(); _fsGradient = null; }
     }
 
     // Debounced segment-injection check. Called by MutationObserver on DOM changes.
