@@ -378,13 +378,144 @@ window.__vizScriptLoaded = true;
             MilkViz.mount(_canvasHost);
             MilkViz.resume();   // mount is async; resume is idempotent — starts loop immediately
             postVizAction('modeOn');
+            startPresets();
         } else {
+            stopPresets();
             MilkViz.unmount();
             if (_canvasHost) { _canvasHost.remove(); _canvasHost = null; }
             MilkViz.pause();    // unmount calls pause, but call again per spec
             postVizAction('modeOff');
         }
     };
+
+    // --- Task 9: Preset manager (auto-cycle, manual skip, track-change, name toast) ---
+    // All timers and listeners are started on setActive(true) and fully torn down on
+    // setActive(false) — no background work when the visualizer is off (battery).
+
+    let _presetsObj = null;   // { [name]: presetObject } from butterchurnPresets.getPresets()
+    let _presetNames = [];    // shuffled working list (capped at 40)
+    let _presetIdx = 0;
+    let _cycleTimer = null;
+    let _trackPollTimer = null;
+    let _lastTrackTitle = null;
+    let _toastEl = null;
+
+    // Resolve the preset global and build the working list once; _presetsObj guards re-entry.
+    function initPresetList() {
+        if (_presetsObj) return;
+        const pg = window.butterchurnPresets;
+        if (!pg) { console.warn('MilkViz: butterchurnPresets not found'); return; }
+        const api = pg.default || pg;
+        _presetsObj = api.getPresets();
+        const allNames = Object.keys(_presetsObj);
+
+        const curated = window.__milkPresets || [];
+        let working = curated.length
+            ? curated.filter(function (n) { return !!_presetsObj[n]; })  // drop invalid names
+            : allNames;
+        if (!working.length) working = allNames;   // fallback: intersection was empty
+
+        // Fisher-Yates shuffle, cap at 40
+        for (let i = working.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            const tmp = working[i]; working[i] = working[j]; working[j] = tmp;
+        }
+        _presetNames = working.slice(0, 40);
+        console.log('MilkViz: preset list built —', _presetNames.length, 'presets');
+    }
+
+    // Auto-fading name toast over the canvas host.
+    function showToast(name) {
+        if (_toastEl) { _toastEl.remove(); _toastEl = null; }
+        if (!_canvasHost) return;
+        const el = document.createElement('div');
+        el.textContent = name;
+        el.style.cssText =
+            'position:absolute;bottom:24px;left:50%;transform:translateX(-50%);' +
+            'background:rgba(0,0,0,0.55);color:#fff;font-family:sans-serif;font-size:13px;' +
+            'padding:4px 12px;border-radius:12px;pointer-events:none;z-index:9999;' +
+            'opacity:1;transition:opacity 1s ease;white-space:nowrap;';
+        _canvasHost.appendChild(el);
+        _toastEl = el;
+        setTimeout(function () { if (_toastEl === el) el.style.opacity = '0'; }, 2000);
+        setTimeout(function () {
+            if (_toastEl === el) { el.remove(); _toastEl = null; }
+        }, 3100);
+    }
+
+    // Load preset at index i (wrapping), show toast.
+    function doLoadPreset(i, blend) {
+        if (!_presetsObj || !_presetNames.length || !MilkViz.viz) return;
+        _presetIdx = ((i % _presetNames.length) + _presetNames.length) % _presetNames.length;
+        const name = _presetNames[_presetIdx];
+        MilkViz.viz.loadPreset(_presetsObj[name], blend != null ? blend : 2.7);
+        showToast(name);
+    }
+
+    // Reschedule auto-advance; random interval 18-28s for variety.
+    function scheduleCycle() {
+        if (_cycleTimer) { clearTimeout(_cycleTimer); _cycleTimer = null; }
+        var delay = 18000 + Math.random() * 10000;
+        _cycleTimer = setTimeout(function () {
+            doLoadPreset(_presetIdx + 1, 2.7);
+            scheduleCycle();
+        }, delay);
+    }
+
+    function _onKeyDown(e) {
+        if (!_active) return;   // ponytail: guard (listener is only attached while active)
+        if (e.key === 'ArrowRight') {
+            e.preventDefault(); doLoadPreset(_presetIdx + 1, 2.7); scheduleCycle();
+        } else if (e.key === 'ArrowLeft') {
+            e.preventDefault(); doLoadPreset(_presetIdx - 1, 2.7); scheduleCycle();
+        }
+    }
+
+    function _onCanvasClick() {
+        doLoadPreset(_presetIdx + 1, 2.7);
+        scheduleCycle();
+    }
+
+    function _checkTrack() {
+        var meta = navigator.mediaSession && navigator.mediaSession.metadata;
+        var title = meta ? meta.title : null;
+        if (title && title !== _lastTrackTitle) {
+            _lastTrackTitle = title;
+            doLoadPreset(_presetIdx + 1, 2.7);
+            scheduleCycle();
+        }
+    }
+
+    function startPresets() {
+        initPresetList();
+        if (!_presetNames.length) return;   // butterchurnPresets not available yet
+
+        // Remove before add: prevents double-binding if re-activated after init resolved.
+        document.removeEventListener('keydown', _onKeyDown);
+        document.addEventListener('keydown', _onKeyDown);
+
+        var meta = navigator.mediaSession && navigator.mediaSession.metadata;
+        _lastTrackTitle = meta ? meta.title : null;
+        if (_trackPollTimer) { clearInterval(_trackPollTimer); }
+        _trackPollTimer = setInterval(_checkTrack, 3000);
+
+        // Canvas listener + first preset require viz to exist — wait for init.
+        ensureInit().then(function () {
+            if (!_active) return;   // deactivated while async init was in flight
+            MilkViz.canvas.removeEventListener('click', _onCanvasClick);
+            MilkViz.canvas.addEventListener('click', _onCanvasClick);
+            doLoadPreset(Math.floor(Math.random() * _presetNames.length), 0);
+            scheduleCycle();
+        });
+    }
+
+    function stopPresets() {
+        if (_cycleTimer) { clearTimeout(_cycleTimer); _cycleTimer = null; }
+        if (_trackPollTimer) { clearInterval(_trackPollTimer); _trackPollTimer = null; }
+        document.removeEventListener('keydown', _onKeyDown);
+        if (MilkViz.canvas) MilkViz.canvas.removeEventListener('click', _onCanvasClick);
+        if (_toastEl) { _toastEl.remove(); _toastEl = null; }
+    }
 
     // Debounced segment-injection check. Called by MutationObserver on DOM changes.
     function scheduleInjectCheck() {
