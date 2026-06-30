@@ -614,7 +614,12 @@
             btn.addEventListener('click', function () {
                 clearStatusOverlay();
                 startNoAudioTimer();      // re-arm: a fresh modeOn may also stay silent
-                postVizAction('modeOn');  // guarded; native re-attempts the tap
+                // Full restart: native's modeOn is idempotent (returns early if a tap is
+                // already running), so a silent/denied tap would never be recreated. Tear it
+                // down first, then re-attempt — this is what lets "Try again" recover after
+                // the user grants Audio Capture permission in System Settings.
+                postVizAction('modeOff');
+                setTimeout(function () { postVizAction('modeOn'); }, 250);
             });
             el.appendChild(btn);
         }
