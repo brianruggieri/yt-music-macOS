@@ -11,7 +11,6 @@
 		/* Spike B resources — remove in Task 12 */
 		B9B001002EDDF001002E5F67 /* butterchurn.min.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; name = "butterchurn.min.js"; path = "youtube-music-player/Resources/visualizer/butterchurn.min.js"; sourceTree = SOURCE_ROOT; };
 		B9B002002EDDF002002E5F67 /* butterchurnPresets.min.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; name = "butterchurnPresets.min.js"; path = "youtube-music-player/Resources/visualizer/butterchurnPresets.min.js"; sourceTree = SOURCE_ROOT; };
-		B9B003002EDDF003002E5F67 /* feed-spike.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; name = "feed-spike.js"; path = "youtube-music-player/Spikes/feed-spike.js"; sourceTree = SOURCE_ROOT; };
 		B9B004002EDDF004002E5F67 /* VERSIONS.txt */ = {isa = PBXFileReference; lastKnownFileType = text; name = "VERSIONS.txt"; path = "youtube-music-player/Resources/visualizer/VERSIONS.txt"; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
@@ -19,7 +18,6 @@
 		/* Spike B resources — remove in Task 12 */
 		B9B001012EDDF001012E5F67 /* butterchurn.min.js in Resources */ = {isa = PBXBuildFile; fileRef = B9B001002EDDF001002E5F67 /* butterchurn.min.js */; };
 		B9B002012EDDF002012E5F67 /* butterchurnPresets.min.js in Resources */ = {isa = PBXBuildFile; fileRef = B9B002002EDDF002002E5F67 /* butterchurnPresets.min.js */; };
-		B9B003012EDDF003012E5F67 /* feed-spike.js in Resources */ = {isa = PBXBuildFile; fileRef = B9B003002EDDF003002E5F67 /* feed-spike.js */; };
 		B9B004012EDDF004012E5F67 /* VERSIONS.txt in Resources */ = {isa = PBXBuildFile; fileRef = B9B004002EDDF004002E5F67 /* VERSIONS.txt */; };
 /* End PBXBuildFile section */
 
@@ -125,7 +123,6 @@
 				/* Spike B resources — remove in Task 12 */
 				B9B001012EDDF001012E5F67 /* butterchurn.min.js in Resources */,
 				B9B002012EDDF002012E5F67 /* butterchurnPresets.min.js in Resources */,
-				B9B003012EDDF003012E5F67 /* feed-spike.js in Resources */,
 				B9B004012EDDF004012E5F67 /* VERSIONS.txt in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

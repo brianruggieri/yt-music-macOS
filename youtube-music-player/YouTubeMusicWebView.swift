@@ -259,13 +259,6 @@ struct YouTubeMusicWebView: NSViewRepresentable {
         // JS->native visualizer control: { action: "modeOn" | "modeOff" }.
         config.userContentController.add(context.coordinator, name: "visualizer")
 
-        // TEMPORARY — Task 4 Step 5 smoke probe; removed in Task 12. Lets a human
-        // confirm ~60 Hz feed payloads in the Web Inspector console before Task 6
-        // wires the real __milkFeed consumer.
-        let vizProbe = WKUserScript(source: "window.__milkFeed = b => console.log('feed', b.length);",
-                                    injectionTime: .atDocumentEnd, forMainFrameOnly: true)
-        config.userContentController.addUserScript(vizProbe)
-
         // Bootstrap loader: read each visualizer asset from the bundle and inject as a
         // WKUserScript (document-end, main frame). Mechanism proven by Spike B — string
         // injection is not gated by CSP script-src; blob-worklet loading wired in Task 6.
@@ -355,18 +348,6 @@ struct YouTubeMusicWebView: NSViewRepresentable {
         init(viewModel: YouTubeMusicViewModel) {
             self.viewModel = viewModel
             super.init()
-
-            // TEMPORARY — Task 4 Step 5 smoke trigger; removed in Task 12. Lets a
-            // human start the feed from the menu before Task 6 sends modeOn over JS.
-            // ponytail: observer token isn't retained — the Coordinator lives for the
-            // app session and this hook is removed in Task 12, so there's nothing to
-            // detach. The handler runs on the main queue, so assumeIsolated is sound.
-            NotificationCenter.default.addObserver(forName: .ytmVizSmokeTest, object: nil, queue: .main) { [weak self] _ in
-                MainActor.assumeIsolated {
-                    guard let self, let wv = self.webView else { return }
-                    self.startVisualizerFeed(wv)
-                }
-            }
         }
 
         // MARK: - Visualizer feed
@@ -591,7 +572,3 @@ struct YouTubeMusicWebView: NSViewRepresentable {
     }
 }
 
-extension Notification.Name {
-    // TEMPORARY — Task 4 Step 5 smoke trigger; removed in Task 12.
-    static let ytmVizSmokeTest = Notification.Name("ytmVizSmokeTest")
-}

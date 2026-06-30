@@ -27,28 +27,6 @@ struct youtube_music_playerApp: App {
                     ImportLauncher.shared.isDiagnosticPresented = true
                 }
                 #endif
-                // TEMPORARY — Spike A (Task 1); removed in Task 12. Runs the audio
-                // tap probe off the main queue and prints ~1s RMS per candidate to
-                // stdout. Plain (non-#if DEBUG) so it works from a Release build too.
-                Button("Run Audio Tap Spike") {
-                    DispatchQueue.global(qos: .userInitiated).async {
-                        AudioTapSpike.runAll()
-                    }
-                }
-                // TEMPORARY — Task 3; removed in Task 12. Plain (non-#if DEBUG) so
-                // they work from the Release build (run.sh strips DEBUG).
-                Button("Run AudioTap Self-Check") {
-                    AudioTap.selfCheck()
-                }
-                Button("Run AudioTap RMS Check") {
-                    AudioTap.rmsCheck()
-                }
-                // TEMPORARY — Task 4 Step 5; removed in Task 12. Starts the ~60 Hz
-                // visualizer feed so a human can confirm base64 payloads in the Web
-                // Inspector console before Task 6 sends modeOn over JS.
-                Button("Start Visualizer Feed (smoke)") {
-                    NotificationCenter.default.post(name: .ytmVizSmokeTest, object: nil)
-                }
             }
         }
     }

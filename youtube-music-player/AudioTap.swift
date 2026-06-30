@@ -10,7 +10,7 @@
 //  exactly. This taps the right child(ren) and exposes a stereo Float32 ring the
 //  feed timer drains at 60 Hz via `latestWindow(frames:)`.
 //
-//  API sequence mirrors the verified spike (Spikes/AudioTapSpike.swift):
+//  API sequence mirrors the verified spike (see Spikes/SPIKE-RESULTS.md):
 //    PID -> AudioObjectID via kAudioHardwarePropertyTranslatePIDToProcessObject
 //    CATapDescription(stereoMixdownOfProcesses:) -> AudioHardwareCreateProcessTap
 //    aggregate device (kAudioAggregateDeviceTapAutoStartKey: true,
@@ -286,11 +286,9 @@ final class AudioTap {
         }
     }
 
-    // MARK: Temporary self-checks (wired to temp menu commands; removed in Task 12)
-    //
-    // Not #if DEBUG: the Release build (run.sh) strips DEBUG, and the temporary
-    // menu commands that invoke these must compile and run in Release.
+    // MARK: Debug self-checks (stripped from Release; kept for debugging)
 
+    #if DEBUG
     /// Pure ring-buffer logic check — no audio. Mirrors scratchpad/ringcheck.swift.
     nonisolated static func selfCheck() {
         setvbuf(stdout, nil, _IONBF, 0)
@@ -337,4 +335,5 @@ final class AudioTap {
         print("[AudioTap] NOTE: nonzero only counts if it drops to ~0 when PAUSED.")
         print("===== END RMS CHECK =====")
     }
+    #endif
 }

@@ -1,6 +1,3 @@
-// Temporary boot marker — removed in Task 12.
-window.__vizScriptLoaded = true;
-
 // Audio sink: native PCM (window.__milkFeed) -> AudioWorklet -> Butterchurn.
 // Task 7 owns canvas mounting, sizing, and the render loop; this file only gets
 // audio flowing and exposes the test hooks (MilkViz.viz, MilkViz.audioLevel()).
@@ -247,6 +244,7 @@ window.__vizScriptLoaded = true;
         if (!_canvasHost) return;
         const r = computeStageRect();
         if (!r || r.width === 0 || r.height === 0) return;
+        _canvasHost.style.inset = '';   // clear stale full-viewport fallback before setting explicit coords
         _canvasHost.style.left = r.left + 'px';
         _canvasHost.style.top = r.top + 'px';
         _canvasHost.style.width = r.width + 'px';
@@ -790,9 +788,3 @@ window.__vizScriptLoaded = true;
     }
 
 })();
-
-// Temporary probe: confirms the script executed in the page's JS context.
-// Removed in Task 12 along with __vizScriptLoaded.
-setTimeout(function() {
-    console.log('VIZ boot', !!window.MilkViz, window.__vizScriptLoaded === true);
-}, 3000);
