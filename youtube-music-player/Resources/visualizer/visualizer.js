@@ -78,6 +78,8 @@ window.__vizScriptLoaded = true;
     // Called ~60 Hz by native with base64 of interleaved-stereo Float32LE.
     // The first feeds kick off async init and are dropped until the node exists.
     window.__milkFeed = function (b64) {
+        // First feed since activation cancels the no-audio fallback timer (Task 11).
+        if (!_feedArrived) { _feedArrived = true; clearNoAudioTimer(); }
         if (!node) { ensureInit(); return; }
         // AudioContext may start suspended under the autoplay policy; resume so
         // the graph actually pulls the worklet. May require a page gesture.
@@ -178,6 +180,8 @@ window.__vizScriptLoaded = true;
 
     MilkViz.unmount = function () {
         MilkViz.pause();
+        clearNoAudioTimer();        // Task 11: no background timer once unmounted
+        clearStatusOverlay();
         if (_resizeObs) { _resizeObs.disconnect(); _resizeObs = null; }
         if (_fallbackMsg) { _fallbackMsg.remove(); _fallbackMsg = null; }
         if (MilkViz.canvas && MilkViz.canvas.parentNode) {
@@ -380,6 +384,7 @@ window.__vizScriptLoaded = true;
             MilkViz.resume();   // mount is async; resume is idempotent — starts loop immediately
             postVizAction('modeOn');
             startPresets();
+            startNoAudioTimer();   // Task 11: hint if neither feed nor nativeStatus arrives
         } else {
             stopPresets();
             removeFullscreenControl();
@@ -389,6 +394,86 @@ window.__vizScriptLoaded = true;
             postVizAction('modeOff');
         }
     };
+
+    // --- Task 11: Native status (permission / no-audio) overlays ---
+    // The render loop keeps running with no PCM (idle, gentle motion); these overlays
+    // only inform — they never tear the visualizer down. All cleaned up on deactivate
+    // (via MilkViz.unmount) so no timer or DOM node survives the visualizer being off.
+
+    let _statusOverlay = null;   // permission-error / no-audio message element
+    let _feedArrived = false;    // any __milkFeed call since last activation
+    let _statusArrived = false;  // any nativeStatus call since last activation
+    let _noAudioTimer = null;    // ~3s fallback timer armed on activation
+
+    function clearStatusOverlay() {
+        if (_statusOverlay) { _statusOverlay.remove(); _statusOverlay = null; }
+    }
+
+    // Centered message over the canvas host. pointer-events:none on the container so it
+    // never blocks canvas clicks (preset skip); only the optional button takes events.
+    function showStatusOverlay(message, withRetry) {
+        clearStatusOverlay();
+        if (!_canvasHost) return;
+        const el = document.createElement('div');
+        el.id = 'milkviz-status-overlay';
+        el.style.cssText =
+            'position:absolute;inset:0;display:flex;flex-direction:column;' +
+            'align-items:center;justify-content:center;gap:14px;z-index:9999;' +
+            'background:rgba(0,0,0,0.45);color:#fff;font-family:sans-serif;' +
+            'font-size:15px;line-height:1.5;text-align:center;padding:24px;' +
+            'pointer-events:none;white-space:pre-line;';
+        const msg = document.createElement('div');
+        msg.textContent = message;
+        el.appendChild(msg);
+        if (withRetry) {
+            const btn = document.createElement('button');
+            btn.textContent = 'Try again';
+            btn.style.cssText =
+                'pointer-events:auto;padding:6px 16px;border:none;border-radius:16px;' +
+                'cursor:pointer;background:rgba(255,255,255,0.2);color:#fff;font-size:13px;';
+            btn.addEventListener('click', function () {
+                clearStatusOverlay();
+                startNoAudioTimer();      // re-arm: a fresh modeOn may also stay silent
+                postVizAction('modeOn');  // guarded; native re-attempts the tap
+            });
+            el.appendChild(btn);
+        }
+        _canvasHost.appendChild(el);
+        _statusOverlay = el;
+    }
+
+    // Called by native (Task 4): {state:'ok'} on tap start, {state:'error',
+    // code:'audioCaptureDenied'} on failure. Either way a status has arrived, so the
+    // generic no-audio fallback timer is cancelled.
+    MilkViz.nativeStatus = function (s) {
+        _statusArrived = true;
+        clearNoAudioTimer();
+        if (!s) return;
+        if (s.state === 'error' && s.code === 'audioCaptureDenied') {
+            showStatusOverlay(
+                'Audio capture permission needed\n' +
+                'System Settings > Privacy & Security > Audio Capture',
+                true);
+        } else if (s.state === 'ok') {
+            clearStatusOverlay();
+        }
+    };
+
+    function clearNoAudioTimer() {
+        if (_noAudioTimer) { clearTimeout(_noAudioTimer); _noAudioTimer = null; }
+    }
+
+    // Armed on activation: if no __milkFeed and no nativeStatus arrive within ~3s,
+    // show a generic hint. Cancelled by the first feed or any status.
+    function startNoAudioTimer() {
+        clearNoAudioTimer();
+        _feedArrived = false;
+        _statusArrived = false;
+        _noAudioTimer = setTimeout(function () {
+            _noAudioTimer = null;
+            if (!_feedArrived && !_statusArrived) showStatusOverlay('No audio detected', false);
+        }, 3000);
+    }
 
     // --- Task 9: Preset manager (auto-cycle, manual skip, track-change, name toast) ---
     // All timers and listeners are started on setActive(true) and fully torn down on

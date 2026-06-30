@@ -307,6 +307,7 @@ struct YouTubeMusicWebView: NSViewRepresentable {
 
         viewModel.webView = webView
         context.coordinator.webView = webView
+        context.coordinator.installLifecycleObservers()
 
         if let url = URL(string: "https://music.youtube.com") {
             webView.load(URLRequest(url: url))
@@ -321,6 +322,7 @@ struct YouTubeMusicWebView: NSViewRepresentable {
     // visualizer message handler so a discarded WebView can't leave a 60 Hz tap running.
     static func dismantleNSView(_ nsView: WKWebView, coordinator: Coordinator) {
         coordinator.stopVisualizerFeed()
+        coordinator.removeLifecycleObservers()
         nsView.configuration.userContentController.removeScriptMessageHandler(forName: "visualizer")
     }
 
@@ -336,6 +338,19 @@ struct YouTubeMusicWebView: NSViewRepresentable {
         // on the main queue and bridges to them via MainActor.assumeIsolated.
         private var audioTap: AudioTap?
         private var feedTimer: DispatchSourceTimer?
+
+        // Lifecycle gates for the 60 Hz feed. The TAP stays alive while mode is on;
+        // only the timer is started/stopped as these flip, so a backgrounded or
+        // paused visualizer does no per-frame work. updateFeedTimer() recomputes
+        // the single "should the timer run" condition rather than pause/resume the
+        // DispatchSource directly (which would risk a suspend/resume imbalance crash).
+        private var modeActive = false
+        private var appActive = true
+        private var windowMiniaturized = false
+        private var trackPlaying = true
+
+        // Tokens for the 4 AppKit lifecycle observers; removed in dismantleNSView.
+        private var lifecycleObservers: [NSObjectProtocol] = []
 
         init(viewModel: YouTubeMusicViewModel) {
             self.viewModel = viewModel
@@ -356,9 +371,10 @@ struct YouTubeMusicWebView: NSViewRepresentable {
 
         // MARK: - Visualizer feed
 
-        /// Start (or no-op if already running) a ~60 Hz loop pushing base64 stereo
-        /// Float32 PCM into the page via window.__milkFeed. Idempotent: a second
-        /// modeOn while running returns early so we never stack a second tap/timer.
+        /// Start (or no-op if already running) the visualizer feed. Creates the tap,
+        /// marks mode active, and lets updateFeedTimer() decide whether the 60 Hz timer
+        /// should actually run. Idempotent: a second modeOn while running returns early
+        /// so we never stack a second tap.
         @MainActor func startVisualizerFeed(_ webView: WKWebView) {
             if audioTap != nil { return }                 // idempotent: already running
             let tap = AudioTap()
@@ -369,8 +385,15 @@ struct YouTubeMusicWebView: NSViewRepresentable {
                 return
             }
             audioTap = tap
+            modeActive = true
             webView.evaluateJavaScript("window.MilkViz && window.MilkViz.nativeStatus({state:'ok'})")
+            updateFeedTimer()
+        }
 
+        /// Build (but do not resume) the ~60 Hz timer that pushes base64 stereo Float32
+        /// PCM into the page via window.__milkFeed. Factored out so updateFeedTimer can
+        /// recreate it on resume without duplicating the event handler.
+        @MainActor private func makeFeedTimer(_ webView: WKWebView) -> DispatchSourceTimer {
             let t = DispatchSource.makeTimerSource(queue: .main)
             t.schedule(deadline: .now(), repeating: .milliseconds(16))   // ~60 Hz
             t.setEventHandler { [weak self, weak webView] in
@@ -389,13 +412,56 @@ struct YouTubeMusicWebView: NSViewRepresentable {
                     webView.evaluateJavaScript("window.__milkFeed && window.__milkFeed('\(b64)')")
                 }
             }
-            t.resume()
-            feedTimer = t
+            return t
+        }
+
+        /// Single source of truth for whether the feed timer runs. The feed should run
+        /// iff mode is on, the app is active, the window isn't miniaturized, the track is
+        /// playing, and a tap exists. Creates+resumes the timer when it should run and is
+        /// absent; cancels+nils it when it shouldn't and is present. Never touches the tap.
+        @MainActor private func updateFeedTimer() {
+            let shouldRun = modeActive && appActive && !windowMiniaturized && trackPlaying && audioTap != nil
+            if shouldRun {
+                guard feedTimer == nil, let webView else { return }
+                let t = makeFeedTimer(webView)
+                feedTimer = t
+                t.resume()
+            } else if feedTimer != nil {
+                feedTimer?.cancel(); feedTimer = nil
+            }
         }
 
         @MainActor func stopVisualizerFeed() {
+            modeActive = false
             feedTimer?.cancel(); feedTimer = nil
             audioTap?.stop(); audioTap = nil
+        }
+
+        /// Register the 4 AppKit lifecycle observers + the track play/pause observer.
+        /// Each flips a gate and recomputes the feed timer. Called from makeNSView
+        /// (MainActor). Notifications deliver on .main, so assumeIsolated is sound.
+        @MainActor func installLifecycleObservers() {
+            let nc = NotificationCenter.default
+            func observe(_ name: Notification.Name, _ apply: @escaping @MainActor (Coordinator) -> Void) -> NSObjectProtocol {
+                nc.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                    MainActor.assumeIsolated { guard let self else { return }; apply(self); self.updateFeedTimer() }
+                }
+            }
+            lifecycleObservers = [
+                observe(NSApplication.didResignActiveNotification)   { $0.appActive = false },
+                observe(NSApplication.didBecomeActiveNotification)   { $0.appActive = true },
+                observe(NSWindow.didMiniaturizeNotification)         { $0.windowMiniaturized = true },
+                observe(NSWindow.didDeminiaturizeNotification)       { $0.windowMiniaturized = false },
+            ]
+            // Track play/pause gates the feed too — paused audio is silence not worth feeding.
+            viewModel.addTrackChangeObserver { [weak self] _, _, _, isPlaying in
+                MainActor.assumeIsolated { guard let self else { return }; self.trackPlaying = isPlaying; self.updateFeedTimer() }
+            }
+        }
+
+        @MainActor func removeLifecycleObservers() {
+            for token in lifecycleObservers { NotificationCenter.default.removeObserver(token) }
+            lifecycleObservers = []
         }
 
         func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
