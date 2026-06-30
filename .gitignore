@@ -23,3 +23,6 @@ build/
 
 # Subagent-driven-development scratch (briefs, reports, ledger)
 .superpowers/
+
+# Light-mode QA working screenshots (local review aids)
+.claude/qa-images/
