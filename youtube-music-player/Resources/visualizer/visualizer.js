@@ -110,11 +110,14 @@
 
     // Recompute backing-store size and notify Butterchurn. Requires viz + canvas
     // to exist and the canvas to be mounted (so clientWidth/Height are nonzero).
+    // Measure the CANVAS, not the host: the host has padding (Part B breathing room)
+    // so clientWidth would include it, but the width:100% canvas fills only the
+    // host's content box — measuring the canvas keeps backing store == displayed size.
     function applySize() {
         if (!MilkViz.canvas || !MilkViz.viz || !_container) return;
         const dpr = window.devicePixelRatio || 1;
-        const w = Math.floor(_container.clientWidth * dpr);
-        const h = Math.floor(_container.clientHeight * dpr);
+        const w = Math.floor(MilkViz.canvas.clientWidth * dpr);
+        const h = Math.floor(MilkViz.canvas.clientHeight * dpr);
         if (w === 0 || h === 0) return;
         MilkViz.canvas.width = w;
         MilkViz.canvas.height = h;
@@ -165,6 +168,7 @@
             const canvas = MilkViz.canvas;
             canvas.style.width = '100%';
             canvas.style.height = '100%';
+            canvas.style.borderRadius = '10px';   // subtle inset corners within the padded host
             container.appendChild(canvas);
             applySize();
 
@@ -282,11 +286,94 @@
         return null;
     }
 
-    // ytmusic-av-toggle's scoped CSS keys the active pill fill on aria-pressed="true",
-    // so selection state is driven entirely by that attribute (the cloned button class
-    // supplies the rest of the styling).
+    // We OWN the toggle's look and selection state. YT re-asserts aria-pressed on
+    // song/video at track change, so we never drive the VISUAL off aria-pressed —
+    // it's driven off the `.milkviz-sel` class we control (see syncSegState). These
+    // helpers only set the a11y attribute on our own cloned button.
     function markPressed(el) { el.setAttribute('aria-pressed', 'true'); }
     function clearPressed(el) { el.setAttribute('aria-pressed', 'false'); }
+
+    let _segAriaObs = null;   // watches YT flipping aria-pressed so we can re-sync
+    let _syncing = false;     // re-entry guard for syncSegState
+
+    // Scoped segmented-pill styling, injected once. Selectors are scoped to
+    // `.av-toggle.milkviz-styled` so no other control is touched. Theme via
+    // .milkviz-light / .milkviz-dark. Red is reserved for playing/brand elsewhere —
+    // a mode toggle stays neutral.
+    function injectToggleCss() {
+        if (document.getElementById('milkviz-toggle-css')) return;
+        const css = document.createElement('style');
+        css.id = 'milkviz-toggle-css';
+        css.textContent = [
+            '.av-toggle.milkviz-styled{display:inline-flex !important;align-items:center !important;',
+            'gap:2px !important;padding:3px !important;border-radius:999px !important;box-sizing:border-box !important;}',
+            '.av-toggle.milkviz-styled.milkviz-light{background:#E7E7E7 !important;border:1px solid rgba(0,0,0,0.08) !important;}',
+            '.av-toggle.milkviz-styled.milkviz-dark{background:rgba(255,255,255,0.08) !important;border:1px solid rgba(255,255,255,0.10) !important;}',
+            '.av-toggle.milkviz-styled>button{border:0 !important;background:transparent !important;border-radius:999px !important;',
+            'padding:6px 18px !important;font:600 14px/1 "Roboto",sans-serif !important;letter-spacing:.2px !important;',
+            'cursor:pointer !important;white-space:nowrap !important;transition:background .15s,color .15s !important;box-shadow:none !important;}',
+            '.av-toggle.milkviz-styled.milkviz-light>button{color:#525252 !important;}',
+            '.av-toggle.milkviz-styled.milkviz-dark>button{color:rgba(255,255,255,0.72) !important;}',
+            '.av-toggle.milkviz-styled.milkviz-light>button:hover:not(.milkviz-sel){background:rgba(0,0,0,0.05) !important;}',
+            '.av-toggle.milkviz-styled.milkviz-dark>button:hover:not(.milkviz-sel){background:rgba(255,255,255,0.06) !important;}',
+            '.av-toggle.milkviz-styled.milkviz-light>button.milkviz-sel{background:#FFFFFF !important;color:#0A0A0A !important;box-shadow:0 1px 2px rgba(0,0,0,.12) !important;}',
+            '.av-toggle.milkviz-styled.milkviz-dark>button.milkviz-sel{background:rgba(255,255,255,0.16) !important;color:#FFFFFF !important;}',
+            '.av-toggle.milkviz-styled>button:focus-visible{outline:2px solid #1A73E8 !important;outline-offset:1px !important;}',
+        ].join('');
+        document.head.appendChild(css);
+    }
+
+    // Stamp our styling + current theme onto the container (re-evaluated each inject).
+    function styleSegContainer(container) {
+        injectToggleCss();
+        container.classList.add('milkviz-styled');
+        container.classList.remove('milkviz-light', 'milkviz-dark');
+        container.classList.add(window.__ytmNativeDark ? 'milkviz-dark' : 'milkviz-light');
+    }
+
+    // Single source of truth for which segment LOOKS selected — exactly one.
+    // Active  -> our Visualizer button. Inactive -> whichever of song/video YT has
+    // aria-pressed (fallback: song). Visual is the `.milkviz-sel` class we own; we
+    // also mirror aria-pressed onto OUR button for a11y, but only when it changes
+    // (so the observer below can't loop).
+    function syncSegState() {
+        if (_syncing) return;
+        _syncing = true;
+        try {
+            const container = document.querySelector('.av-toggle.milkviz-styled') ||
+                document.querySelector('ytmusic-av-toggle .av-toggle') ||
+                document.querySelector('div.av-toggle');
+            if (!container) return;
+            const seg = container.querySelector('#milkviz-seg-btn');
+            const song = container.querySelector('.song-button');
+            const video = container.querySelector('.video-button:not(#milkviz-seg-btn)');
+            let target;
+            if (_active && seg) {
+                target = seg;
+            } else {
+                target = (song && song.getAttribute('aria-pressed') === 'true') ? song
+                    : (video && video.getAttribute('aria-pressed') === 'true') ? video
+                        : song;
+            }
+            Array.from(container.children).forEach(function (b) {
+                b.classList.toggle('milkviz-sel', b === target);
+            });
+            if (seg) {
+                const want = _active ? 'true' : 'false';
+                if (seg.getAttribute('aria-pressed') !== want) seg.setAttribute('aria-pressed', want);
+            }
+        } finally {
+            _syncing = false;
+        }
+    }
+
+    // Observe YT flipping song/video aria-pressed (e.g. it re-asserts Song on track
+    // change) and re-sync. Our writes change `class`, not aria-pressed, so no loop.
+    function watchSegAria(container) {
+        if (_segAriaObs) _segAriaObs.disconnect();
+        _segAriaObs = new MutationObserver(syncSegState);
+        _segAriaObs.observe(container, { attributes: true, attributeFilter: ['aria-pressed'], subtree: true });
+    }
 
     // Replace only the visible label text of a deep-cloned tab, preserving every
     // wrapper/icon/class. Swaps the first non-empty text node (the label).
@@ -324,33 +411,23 @@
         btn.addEventListener('click', (e) => {
             // Our button is synthetic; stop YT's toggle from also handling it.
             e.stopPropagation();
-            if (!_active) {
-                // Activate: press ours, let YT's own buttons read unpressed.
-                siblings.forEach(clearPressed);
-                markPressed(btn);
-                MilkViz.setActive(true);
-            } else {
-                clearPressed(btn);
-                MilkViz.setActive(false);
-            }
+            MilkViz.setActive(!_active);   // setActive ends by calling syncSegState
         });
 
-        // Clicking Song or Video deactivates the visualizer. Only release OUR pressed
-        // state — YT manages its own buttons' aria-pressed.
+        // Clicking Song or Video deactivates the visualizer; then reflect YT's new
+        // selection. YT updates aria-pressed after our capture-phase handler, so defer
+        // the sync a tick (the aria observer also catches it as a backstop).
         siblings.forEach((sib) => {
             sib.addEventListener('click', () => {
-                if (_active) {
-                    clearPressed(btn);
-                    MilkViz.setActive(false);
-                }
+                if (_active) MilkViz.setActive(false);
+                setTimeout(syncSegState, 0);
             }, true);
         });
 
         container.appendChild(btn);   // 3rd child of .av-toggle
-        if (_active) {   // SPA re-injection while active: reflect pressed state
-            siblings.forEach(clearPressed);
-            markPressed(btn);
-        }
+        styleSegContainer(container);
+        watchSegAria(container);
+        syncSegState();               // single-active: exactly one .milkviz-sel
         _segInjected = true;
         console.log('MilkViz: Visualizer button injected (clone of',
             (tmpl.className || '').slice(0, 40), ')');
@@ -402,7 +479,8 @@
                 // ytmusic-player-page, not the resizing media element). pointer-events:auto
                 // so canvas clicks land on us (preset skip, Fix 3) not YT's play/pause.
                 _canvasHost.style.cssText =
-                    'position:fixed;z-index:9998;background:#000;pointer-events:auto;';
+                    'position:fixed;z-index:9998;background:#000;pointer-events:auto;' +
+                    'padding:24px;box-sizing:border-box;';   // breathing room: canvas insets from stage edges
                 document.body.appendChild(_canvasHost);
                 const r = computeStageRect();
                 if (r) {
@@ -424,6 +502,7 @@
             postVizAction('modeOn');
             startPresets();
             startNoAudioTimer();   // Task 11: hint if neither feed nor nativeStatus arrives
+            syncSegState();        // Visualizer becomes the sole selected segment
         } else {
             stopPresets();
             removeFullscreenControl();
@@ -432,6 +511,7 @@
             if (_canvasHost) { _canvasHost.remove(); _canvasHost = null; }
             MilkViz.pause();    // unmount calls pause, but call again per spec
             postVizAction('modeOff');
+            syncSegState();     // hand selection back to YT's current song/video
         }
     };
 
