@@ -26,7 +26,8 @@
   canvas.width = 640;
   canvas.height = 360;
   Object.assign(canvas.style, {
-    position: 'fixed', bottom: '10px', left: '10px', zIndex: '999998',
+    position: 'fixed', top: '70px', right: '10px', zIndex: '999998',
+    pointerEvents: 'none',  // clicks pass through to YT controls (so Spike A can play a track)
     borderRadius: '8px', border: '1px solid rgba(255,255,255,0.2)',
     boxShadow: '0 2px 12px rgba(0,0,0,0.5)'
   });
