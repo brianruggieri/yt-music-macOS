@@ -249,6 +249,27 @@ struct YouTubeMusicWebView: NSViewRepresentable {
         let lightScript = WKUserScript(source: LightThemeEngine.script, injectionTime: .atDocumentStart, forMainFrameOnly: true)
         config.userContentController.addUserScript(lightScript)
 
+        // ===== TEMPORARY Spike B (remove in Task 12) =====
+        // Injects Butterchurn + feed harness to verify AudioWorklet->Butterchurn wiring.
+        // Files are read from the app bundle at runtime so they are not inlined here.
+        let loadJS: (String, String?) -> String? = { name, subdir in
+            (Bundle.main.url(forResource: name, withExtension: "js", subdirectory: subdir)
+                ?? Bundle.main.url(forResource: name, withExtension: "js", subdirectory: "Resources/" + (subdir ?? ""))
+                ?? Bundle.main.url(forResource: name, withExtension: "js"))
+                .flatMap { try? String(contentsOf: $0, encoding: .utf8) }
+        }
+        let spikeScripts: [(String, String?)] = [
+            ("butterchurn.min", "visualizer"),
+            ("butterchurnPresets.min", "visualizer"),
+            ("feed-spike", nil)
+        ]
+        for (name, subdir) in spikeScripts {
+            if let src = loadJS(name, subdir) {
+                config.userContentController.addUserScript(
+                    WKUserScript(source: src, injectionTime: .atDocumentEnd, forMainFrameOnly: true))
+            }
+        }
+        // ===== END Spike B =====
 
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.navigationDelegate = context.coordinator
