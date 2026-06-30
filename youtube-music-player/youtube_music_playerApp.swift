@@ -35,6 +35,14 @@ struct youtube_music_playerApp: App {
                         AudioTapSpike.runAll()
                     }
                 }
+                // TEMPORARY — Task 3; removed in Task 12. Plain (non-#if DEBUG) so
+                // they work from the Release build (run.sh strips DEBUG).
+                Button("Run AudioTap Self-Check") {
+                    AudioTap.selfCheck()
+                }
+                Button("Run AudioTap RMS Check") {
+                    AudioTap.rmsCheck()
+                }
             }
         }
     }
