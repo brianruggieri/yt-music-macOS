@@ -199,6 +199,7 @@ window.__vizScriptLoaded = true;
     let _segInjected = false;    // our Visualizer segment is currently in the DOM
     let _overlayBtn = null;      // fallback overlay button element
     let _canvasHost = null;      // div we mount the canvas into
+    let _stageResizeHandler = null;  // window resize -> reposition fixed host
     let _t8FallbackTimer = null; // 5-second timer before injecting overlay fallback
     let _injectPending = false;  // debounce flag for MutationObserver callbacks
 
@@ -218,13 +219,39 @@ window.__vizScriptLoaded = true;
     // `ytmusic-player #main-panel` is the stable stage box regardless of Song/Video
     // entry point (the media letterboxes within it), so prefer it over the media
     // element itself (which shrinks to album-art square vs 16:9 video).
-    function findStageRegion() {
-        const region =
-            document.querySelector('ytmusic-player #main-panel') ||
-            document.querySelector('ytmusic-player .content') ||
-            document.querySelector('ytmusic-player') || null;
-        if (region) console.log('MilkViz: stage region —', region.id || region.className || region.tagName);
-        return region;
+    // Compute the consistent center-stage rect in viewport coords. Ground truth:
+    // ytmusic-player-page stays 1272x688 in BOTH Song and Video, while ytmusic-player
+    // (the media element) resizes to album(square)/video(16:9) — so we must NOT track
+    // the media element. We carve the stage COLUMN out of the page: from the page's
+    // left edge to the queue/side-panel's left edge, and from just below the Song/Video
+    // toggle down to the page bottom. This excludes the toggle (stays clickable) and the
+    // UP-NEXT queue (stays visible), and is identical regardless of Song/Video.
+    function computeStageRect() {
+        const page = document.querySelector('ytmusic-player-page');
+        if (!page) return null;
+        const pr = page.getBoundingClientRect();
+        if (pr.width === 0 || pr.height === 0) return null;
+        const tog = document.querySelector('ytmusic-av-toggle') || document.querySelector('div.av-toggle');
+        const queue = document.querySelector('#side-panel') || document.querySelector('ytmusic-player-queue');
+        const tr = tog && tog.getBoundingClientRect();
+        const qr = queue && queue.getBoundingClientRect();
+        const left = pr.left;
+        const top = (tr && tr.bottom > pr.top) ? tr.bottom + 12 : pr.top;
+        const right = (qr && qr.left > left + 50) ? qr.left : pr.right;
+        const bottom = pr.bottom;
+        return { left, top, width: Math.max(0, right - left), height: Math.max(0, bottom - top) };
+    }
+
+    // Position the fixed canvas host over the computed stage rect, then resize the canvas.
+    function applyStageRect() {
+        if (!_canvasHost) return;
+        const r = computeStageRect();
+        if (!r || r.width === 0 || r.height === 0) return;
+        _canvasHost.style.left = r.left + 'px';
+        _canvasHost.style.top = r.top + 'px';
+        _canvasHost.style.width = r.width + 'px';
+        _canvasHost.style.height = r.height + 'px';
+        applySize();
     }
 
     // Find the REAL Song/Video control container. Ground truth from the live page:
@@ -373,24 +400,24 @@ window.__vizScriptLoaded = true;
             if (!_canvasHost) {
                 _canvasHost = document.createElement('div');
                 _canvasHost.id = 'milkviz-canvas-host';
-                const stage = findStageRegion();
-                // pointer-events:auto so canvas clicks land on us (preset skip, Fix 3)
-                // instead of falling through to YT's play/pause.
-                if (stage) {
-                    // Overlay canvas filling the consistent center-stage region.
-                    if (getComputedStyle(stage).position === 'static') {
-                        stage.style.position = 'relative';
-                    }
-                    _canvasHost.style.cssText =
-                        'position:absolute;inset:0;z-index:9998;background:#000;pointer-events:auto;';
-                    stage.appendChild(_canvasHost);
-                    console.log('MilkViz: canvas host overlaid on', stage.tagName);
+                // Fixed overlay positioned over the consistent stage column (computed from
+                // ytmusic-player-page, not the resizing media element). pointer-events:auto
+                // so canvas clicks land on us (preset skip, Fix 3) not YT's play/pause.
+                _canvasHost.style.cssText =
+                    'position:fixed;z-index:9998;background:#000;pointer-events:auto;';
+                document.body.appendChild(_canvasHost);
+                const r = computeStageRect();
+                if (r) {
+                    applyStageRect();
+                    console.log('MilkViz: stage host', Math.round(r.width) + 'x' + Math.round(r.height));
                 } else {
-                    // ponytail: fixed full-screen fallback when stage not found
-                    _canvasHost.style.cssText =
-                        'position:fixed;inset:0;z-index:9998;background:#000;pointer-events:auto;';
-                    document.body.appendChild(_canvasHost);
-                    console.log('MilkViz: canvas host as fixed overlay (stage not found)');
+                    // ponytail: full-viewport fallback when the player page isn't found
+                    _canvasHost.style.inset = '0';
+                    console.log('MilkViz: stage host as full-viewport fallback');
+                }
+                if (!_stageResizeHandler) {
+                    _stageResizeHandler = function () { applyStageRect(); };
+                    window.addEventListener('resize', _stageResizeHandler);
                 }
             }
             MilkViz.mount(_canvasHost);
@@ -403,6 +430,7 @@ window.__vizScriptLoaded = true;
             stopPresets();
             removeFullscreenControl();
             MilkViz.unmount();
+            if (_stageResizeHandler) { window.removeEventListener('resize', _stageResizeHandler); _stageResizeHandler = null; }
             if (_canvasHost) { _canvasHost.remove(); _canvasHost = null; }
             MilkViz.pause();    // unmount calls pause, but call again per spec
             postVizAction('modeOff');
