@@ -275,6 +275,18 @@ struct YouTubeMusicWebView: NSViewRepresentable {
                 ?? Bundle.main.url(forResource: name, withExtension: "js"))
                 .flatMap { try? String(contentsOf: $0, encoding: .utf8) }
         }
+        // Worklet source for visualizer.js. A worklet must load into the
+        // AudioWorklet context (not the page), so we hand its source over as a
+        // string and let visualizer.js build a blob: module from it. base64 +
+        // atob keeps the injected literal free of quotes/newlines; JS source is
+        // ASCII so it round-trips cleanly. Registered BEFORE visualizer.js below.
+        if let workletSrc = loadJS("pcm-worklet", "visualizer") {
+            let b64 = Data(workletSrc.utf8).base64EncodedString()
+            config.userContentController.addUserScript(
+                WKUserScript(source: "window.__pcmWorkletSource = atob('\(b64)');",
+                             injectionTime: .atDocumentEnd, forMainFrameOnly: true))
+        }
+
         let vizScripts: [(String, String?)] = [
             ("butterchurn.min",        "visualizer"),
             ("butterchurnPresets.min", "visualizer"),
