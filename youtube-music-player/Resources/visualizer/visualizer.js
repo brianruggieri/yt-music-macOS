@@ -243,6 +243,19 @@
         return { left, top, width: Math.max(0, right - left), height: Math.max(0, bottom - top) };
     }
 
+    // The effective page background behind the stage — walk up from the player page to the
+    // first opaque background. Used to tint the host padding frame so it blends with the page
+    // (off-white in light, near-black in dark) in whatever theme YT is currently rendering.
+    function pageBgColor() {
+        var el = document.querySelector('ytmusic-player-page') || document.body;
+        while (el) {
+            var bg = getComputedStyle(el).backgroundColor;
+            if (bg && bg !== 'rgba(0, 0, 0, 0)' && bg !== 'transparent') return bg;
+            el = el.parentElement;
+        }
+        return (window.__ytmNativeDark === true || window.__ytmNativeDark === 'true') ? '#0f0f0f' : '#F3F3F3';
+    }
+
     // Position the fixed canvas host over the computed stage rect, then resize the canvas.
     function applyStageRect() {
         if (!_canvasHost) return;
@@ -307,7 +320,7 @@
         css.textContent = [
             '.av-toggle.milkviz-styled{display:inline-flex !important;align-items:center !important;',
             'gap:2px !important;padding:3px !important;border-radius:999px !important;box-sizing:border-box !important;}',
-            '.av-toggle.milkviz-styled.milkviz-light{background:#E7E7E7 !important;border:1px solid rgba(0,0,0,0.08) !important;}',
+            '.av-toggle.milkviz-styled.milkviz-light{background:#E7E7E7 !important;border:none !important;}',
             '.av-toggle.milkviz-styled.milkviz-dark{background:rgba(255,255,255,0.08) !important;border:1px solid rgba(255,255,255,0.10) !important;}',
             '.av-toggle.milkviz-styled>button{border:0 !important;background:transparent !important;border-radius:999px !important;',
             'padding:6px 18px !important;font:600 14px/1 "Roboto",sans-serif !important;letter-spacing:.2px !important;',
@@ -374,6 +387,10 @@
     function killButtonBorders(container) {
         const c = container || document.querySelector('.av-toggle.milkviz-styled');
         if (!c) return;
+        const dark = (window.__ytmNativeDark === true || window.__ytmNativeDark === 'true');
+        // Light mode: strip the engine's inline border off the track container too (dark
+        // keeps its subtle CSS track border). Buttons never carry a border in either theme.
+        if (!dark) { c.style.setProperty('border', 'none', 'important'); }
         Array.from(c.children).forEach(function (el) {
             el.style.setProperty('border', '0', 'important');
             el.style.setProperty('outline', '0', 'important');
@@ -388,7 +405,10 @@
         _borderObs = new MutationObserver(function () {
             const c = document.querySelector('.av-toggle.milkviz-styled');
             if (!c) return;
-            const hasBorder = Array.from(c.children).some(function (el) {
+            const dark = (window.__ytmNativeDark === true || window.__ytmNativeDark === 'true');
+            // children should never have a border; in light, the container shouldn't either.
+            const els = (!dark) ? [c].concat(Array.from(c.children)) : Array.from(c.children);
+            const hasBorder = els.some(function (el) {
                 return getComputedStyle(el).borderTopWidth !== '0px';
             });
             if (hasBorder) killButtonBorders(c);
@@ -513,8 +533,11 @@
                 // Fixed overlay positioned over the consistent stage column (computed from
                 // ytmusic-player-page, not the resizing media element). pointer-events:auto
                 // so canvas clicks land on us (preset skip, Fix 3) not YT's play/pause.
+                // Opaque bg hides the YT media behind the overlay; matched to the actual page
+                // background so the 24px padding frame blends seamlessly (off-white in light,
+                // near-black in dark) instead of being a hard white/black block.
                 _canvasHost.style.cssText =
-                    'position:fixed;z-index:9998;background:#000;pointer-events:auto;' +
+                    'position:fixed;z-index:9998;background:' + pageBgColor() + ';pointer-events:auto;' +
                     'padding:24px;box-sizing:border-box;';   // breathing room: canvas insets from stage edges
                 document.body.appendChild(_canvasHost);
                 const r = computeStageRect();
@@ -674,9 +697,18 @@
         el.textContent = name;
         el.style.cssText =
             'position:absolute;bottom:24px;left:50%;transform:translateX(-50%);' +
-            'background:rgba(0,0,0,0.55);color:#fff;font-family:sans-serif;font-size:13px;' +
+            'font-family:sans-serif;font-size:13px;' +
             'padding:4px 12px;border-radius:12px;pointer-events:none;z-index:9999;' +
             'opacity:1;transition:opacity 1s ease;white-space:nowrap;';
+        // Force the toast palette inline-!important: it always sits over the dark visualizer
+        // canvas, so it must stay white-on-dark in BOTH themes. The light-theme engine
+        // otherwise inverts text to near-black (invisible here), like it does to controls.
+        el.style.setProperty('color', '#fff', 'important');
+        // -webkit-text-fill-color controls the painted glyph color and beats the light
+        // engine's `color` inversion (which the engine applies inline-!important), so the
+        // toast stays white over the dark canvas in light mode without needing an observer.
+        el.style.setProperty('-webkit-text-fill-color', '#fff', 'important');
+        el.style.setProperty('background', 'rgba(0,0,0,0.72)', 'important');
         _canvasHost.appendChild(el);
         _toastEl = el;
         setTimeout(function () { if (_toastEl === el) el.style.opacity = '0'; }, 2000);
