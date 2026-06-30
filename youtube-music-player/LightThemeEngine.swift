@@ -202,6 +202,17 @@ enum LightThemeEngine {
             // dark, light theme or not). Pin it dark (YT keeps its own ~0.3 opacity) so the
             // page dims properly and the dialog on top pops.
             ['tp-yt-iron-overlay-backdrop', 'background-color: #000000'],
+            // Edit-thumbnail / image-cropper dialog. Its tp-yt-paper-dialog is transparent
+            // (alpha 0) and NO child paints a surface — invisible over dark mode's dark page,
+            // but in light mode the cropper canvas, title and Cancel/Done float over the
+            // dimmed page with no card behind them: reads as a huge unbounded image with the
+            // track list bleeding through (the "layering" mess). Give just this dialog (scoped
+            // via :has) a real opaque light card. NOTHING else — the dialog is a fixed 632x741
+            // (it never scales with the viewport), so size caps are pointless, and an
+            // overflow/scroll cap would shift the canvas under the JS-positioned crop handles
+            // and misalign them. Background only.
+            ['tp-yt-paper-dialog:has(yt-image-editor-renderer)',
+                'background-color: rgb(255, 255, 255)'],
             // The immersive backdrop / scrolled nav bar fill is one element YT colors
             // inline from page content (a dark value the cascade can't reach). Pin it
             // to the light surface so both the header and the scroll bar read light.

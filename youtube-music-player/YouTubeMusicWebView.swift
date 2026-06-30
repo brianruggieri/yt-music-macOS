@@ -299,7 +299,39 @@ struct YouTubeMusicWebView: NSViewRepresentable {
             panel.canChooseFiles = true
             panel.canChooseDirectories = false
             panel.allowsMultipleSelection = parameters.allowsMultipleSelection
-            panel.begin { completionHandler($0 == .OK ? panel.urls : nil) }
+            let finish: (NSApplication.ModalResponse) -> Void = { response in
+                let cancelled = response != .OK
+                completionHandler(cancelled ? nil : panel.urls)
+                // Hand first-responder back to the web view so WebKit resumes dispatching
+                // events to the page.
+                webView.window?.makeFirstResponder(webView)
+                // On Cancel, WKWebView is slow to deliver the <input type=file> `cancel`
+                // event, so YT's editor overlay + dimming backdrop outlive the panel by a
+                // few seconds. We already KNOW the user cancelled, so don't wait for that
+                // event — tear the overlay down ourselves: close the image-editor dialog
+                // (which drops its backdrop) and shut any backdrop left orphaned. Scoped to
+                // the image editor so no other dialog is touched; only runs on Cancel, so a
+                // real pick (which opens the crop dialog) is never closed.
+                if cancelled {
+                    webView.evaluateJavaScript("""
+                    (function(){
+                      document.querySelectorAll('tp-yt-paper-dialog').forEach(function(d){
+                        if (d.querySelector && d.querySelector('yt-image-editor-renderer') && d.close) d.close();
+                      });
+                      document.querySelectorAll('tp-yt-iron-overlay-backdrop').forEach(function(b){
+                        if (b.close) b.close(); else b.remove();
+                      });
+                    })();
+                    """, completionHandler: nil)
+                }
+            }
+            // Sheet (not a detached panel) so the window stays key and dismissal returns
+            // control to it at once; fall back to a free panel if there's no window yet.
+            if let window = webView.window {
+                panel.beginSheetModal(for: window, completionHandler: finish)
+            } else {
+                panel.begin(completionHandler: finish)
+            }
         }
 
         func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
