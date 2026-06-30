@@ -376,11 +376,13 @@ window.__vizScriptLoaded = true;
                 }
             }
             MilkViz.mount(_canvasHost);
+            addFullscreenControl();
             MilkViz.resume();   // mount is async; resume is idempotent — starts loop immediately
             postVizAction('modeOn');
             startPresets();
         } else {
             stopPresets();
+            removeFullscreenControl();
             MilkViz.unmount();
             if (_canvasHost) { _canvasHost.remove(); _canvasHost = null; }
             MilkViz.pause();    // unmount calls pause, but call again per spec
@@ -515,6 +517,63 @@ window.__vizScriptLoaded = true;
         document.removeEventListener('keydown', _onKeyDown);
         if (MilkViz.canvas) MilkViz.canvas.removeEventListener('click', _onCanvasClick);
         if (_toastEl) { _toastEl.remove(); _toastEl = null; }
+    }
+
+    // --- Task 10: Fullscreen control ---
+    // Button lives on _canvasHost; listener + button torn down on setActive(false).
+
+    let _fsBtn = null;
+    let _fsChangeHandler = null;
+
+    function addFullscreenControl() {
+        if (_fsBtn || !_canvasHost) return;
+
+        const btn = document.createElement('button');
+        btn.id = 'milkviz-fs-btn';
+        btn.textContent = '[ ]';
+        btn.title = 'Enter fullscreen';
+        // ponytail: inline styles — no external CSS, consistent with overlay btn above
+        btn.style.cssText =
+            'position:absolute;top:8px;right:8px;z-index:9999;' +
+            'padding:4px 8px;border:none;border-radius:6px;' +
+            'background:rgba(255,255,255,0.15);color:#fff;' +
+            'font-family:monospace;font-size:13px;cursor:pointer;' +
+            'backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);';
+
+        btn.addEventListener('click', function () {
+            if (!document.fullscreenElement) {
+                const req = _canvasHost.requestFullscreen || _canvasHost.webkitRequestFullscreen;
+                if (req) req.call(_canvasHost);
+            } else {
+                document.exitFullscreen();
+            }
+        });
+
+        _canvasHost.appendChild(btn);
+        _fsBtn = btn;
+
+        _fsChangeHandler = function () {
+            applySize();
+            if (_fsBtn) {
+                const inFs = !!document.fullscreenElement;
+                _fsBtn.textContent = inFs ? '[x]' : '[ ]';
+                _fsBtn.title = inFs ? 'Exit fullscreen' : 'Enter fullscreen';
+            }
+        };
+        document.addEventListener('fullscreenchange', _fsChangeHandler);
+        document.addEventListener('webkitfullscreenchange', _fsChangeHandler);
+    }
+
+    function removeFullscreenControl() {
+        if (document.fullscreenElement) {
+            document.exitFullscreen().catch(function () {});
+        }
+        if (_fsChangeHandler) {
+            document.removeEventListener('fullscreenchange', _fsChangeHandler);
+            document.removeEventListener('webkitfullscreenchange', _fsChangeHandler);
+            _fsChangeHandler = null;
+        }
+        if (_fsBtn) { _fsBtn.remove(); _fsBtn = null; }
     }
 
     // Debounced segment-injection check. Called by MutationObserver on DOM changes.
