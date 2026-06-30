@@ -459,6 +459,13 @@
         const btn = tmpl.cloneNode(true);   // deep clone: keeps full inner structure
         btn.id = 'milkviz-seg-btn';
         clearPressed(btn);                  // unpressed default after clone
+        // On audio-only tracks YT disables the Video tab; cloning it would copy the disabled
+        // state, and a disabled <button> never dispatches click — making the visualizer
+        // unreachable exactly there. Force it enabled.
+        btn.disabled = false;
+        btn.removeAttribute('disabled');
+        btn.removeAttribute('aria-disabled');
+        btn.classList.remove('disabled');
         setSegLabel(btn, 'Visualizer');
         btn.style.cursor = 'pointer';
 

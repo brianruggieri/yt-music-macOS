@@ -41,15 +41,37 @@ final class RingBuffer: @unchecked Sendable {
     private let lock = os_unfair_lock_t.allocate(capacity: 1)
     init(capacity: Int) { cap = capacity; buf = [Float](repeating: 0, count: capacity); lock.initialize(to: .init()) }
     deinit { lock.deinitialize(count: 1); lock.deallocate() }
+    // Monotonic sample counters for the draining reader (the feed). writeCount tracks total
+    // samples ever written; readCount tracks total drained. available = writeCount - readCount.
+    private var writeCount = 0
+    private var readCount = 0
     func write(_ samples: UnsafeBufferPointer<Float>) {
         os_unfair_lock_lock(lock); defer { os_unfair_lock_unlock(lock) }
         for s in samples { buf[writeIdx] = s; writeIdx = (writeIdx + 1) % cap }
+        writeCount += samples.count
     }
     func latest(_ n: Int) -> [Float] {
         os_unfair_lock_lock(lock); defer { os_unfair_lock_unlock(lock) }
         var out = [Float](repeating: 0, count: n)
         var idx = (writeIdx - n + cap) % cap
         for i in 0..<n { out[i] = buf[idx]; idx = (idx + 1) % cap }
+        return out
+    }
+    // Draining read: returns only samples written since the previous drain (capped at
+    // maxSamples), advancing the read cursor. Unlike latest(), consecutive drains never
+    // overlap — so the 60 Hz feed sends ~one tick of fresh audio instead of a sliding
+    // window that floods the worklet. On overflow (writer lapped the reader) the oldest
+    // unread samples are dropped.
+    func drain(_ maxSamples: Int) -> [Float] {
+        os_unfair_lock_lock(lock); defer { os_unfair_lock_unlock(lock) }
+        var avail = writeCount - readCount
+        if avail > cap { readCount = writeCount - cap; avail = cap }   // dropped oldest unread
+        let n = min(avail, maxSamples)
+        if n <= 0 { return [] }
+        var out = [Float](repeating: 0, count: n)
+        var idx = readCount % cap
+        for i in 0..<n { out[i] = buf[idx]; idx = (idx + 1) % cap }
+        readCount += n
         return out
     }
 }
@@ -221,6 +243,14 @@ final class AudioTap {
     /// i.e. `frames * 2` values, zero-padded at the front if not yet filled.
     nonisolated func latestWindow(frames: Int) -> [Float] {
         ring.latest(frames * 2)
+    }
+
+    /// Drains only the stereo frames captured since the previous call (up to `maxFrames`),
+    /// as interleaved Float32. Consecutive calls don't overlap — the 60 Hz feed uses this so
+    /// it sends one tick of fresh audio (~real-time) instead of a sliding window that floods
+    /// the worklet ring. Returns [] when nothing new has been captured.
+    nonisolated func drainNew(maxFrames: Int) -> [Float] {
+        ring.drain(maxFrames * 2)
     }
 
     // MARK: Target discovery
