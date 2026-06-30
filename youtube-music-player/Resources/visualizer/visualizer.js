@@ -100,6 +100,7 @@ window.__vizScriptLoaded = true;
 
     let _container = null;
     let _resizeObs = null;
+    let _fallbackMsg = null;
     let _rafId = null;
     let _loopActive = false;
 
@@ -145,17 +146,20 @@ window.__vizScriptLoaded = true;
     // inserted once init resolves (viz-not-ready is handled transparently).
     MilkViz.mount = function (container) {
         if (!hasWebGL2()) {
-            const msg = document.createElement('div');
-            msg.textContent = 'Visualizer needs WebGL2';
-            msg.style.cssText = 'display:flex;align-items:center;justify-content:center;' +
+            _fallbackMsg = document.createElement('div');
+            _fallbackMsg.textContent = 'Visualizer needs WebGL2';
+            _fallbackMsg.style.cssText = 'display:flex;align-items:center;justify-content:center;' +
                 'width:100%;height:100%;color:#fff;font-family:sans-serif;font-size:1rem;';
-            container.appendChild(msg);
+            container.appendChild(_fallbackMsg);
             return;
         }
 
         _container = container;
 
         ensureInit().then(function () {
+            // Guard against double-mount leaking the prior ResizeObserver.
+            if (_resizeObs) { _resizeObs.disconnect(); _resizeObs = null; }
+
             const canvas = MilkViz.canvas;
             canvas.style.width = '100%';
             canvas.style.height = '100%';
@@ -172,6 +176,7 @@ window.__vizScriptLoaded = true;
     MilkViz.unmount = function () {
         MilkViz.pause();
         if (_resizeObs) { _resizeObs.disconnect(); _resizeObs = null; }
+        if (_fallbackMsg) { _fallbackMsg.remove(); _fallbackMsg = null; }
         if (MilkViz.canvas && MilkViz.canvas.parentNode) {
             MilkViz.canvas.parentNode.removeChild(MilkViz.canvas);
         }
