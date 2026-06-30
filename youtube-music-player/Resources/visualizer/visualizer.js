@@ -95,6 +95,88 @@ window.__vizScriptLoaded = true;
         for (let i = 0; i < levelBuf.length; i++) sum += levelBuf[i] * levelBuf[i];
         return Math.sqrt(sum / levelBuf.length);
     };
+
+    // --- Task 7: canvas mount, render loop, resize handling ---
+
+    let _container = null;
+    let _resizeObs = null;
+    let _rafId = null;
+    let _loopActive = false;
+
+    function hasWebGL2() {
+        try { return !!document.createElement('canvas').getContext('webgl2'); }
+        catch (_) { return false; }
+    }
+
+    // Recompute backing-store size and notify Butterchurn. Requires viz + canvas
+    // to exist and the canvas to be mounted (so clientWidth/Height are nonzero).
+    function applySize() {
+        if (!MilkViz.canvas || !MilkViz.viz || !_container) return;
+        const dpr = window.devicePixelRatio || 1;
+        const w = Math.floor(_container.clientWidth * dpr);
+        const h = Math.floor(_container.clientHeight * dpr);
+        if (w === 0 || h === 0) return;
+        MilkViz.canvas.width = w;
+        MilkViz.canvas.height = h;
+        MilkViz.viz.setRendererSize(w, h);
+    }
+
+    // ponytail: single rAF token; _loopActive flag makes resume() idempotent.
+    function loop() {
+        if (!_loopActive) return;
+        _rafId = requestAnimationFrame(loop);
+        if (MilkViz.viz) MilkViz.viz.render();
+    }
+
+    MilkViz.resume = function () {
+        if (_loopActive) return;
+        _loopActive = true;
+        _rafId = requestAnimationFrame(loop);
+    };
+
+    MilkViz.pause = function () {
+        _loopActive = false;
+        if (_rafId !== null) { cancelAnimationFrame(_rafId); _rafId = null; }
+    };
+
+    // mount(container) — inserts canvas, starts render loop.
+    // If WebGL2 unavailable: shows a static message div instead; render is a no-op.
+    // If called before audio init has run: ensureInit() triggers it; canvas is
+    // inserted once init resolves (viz-not-ready is handled transparently).
+    MilkViz.mount = function (container) {
+        if (!hasWebGL2()) {
+            const msg = document.createElement('div');
+            msg.textContent = 'Visualizer needs WebGL2';
+            msg.style.cssText = 'display:flex;align-items:center;justify-content:center;' +
+                'width:100%;height:100%;color:#fff;font-family:sans-serif;font-size:1rem;';
+            container.appendChild(msg);
+            return;
+        }
+
+        _container = container;
+
+        ensureInit().then(function () {
+            const canvas = MilkViz.canvas;
+            canvas.style.width = '100%';
+            canvas.style.height = '100%';
+            container.appendChild(canvas);
+            applySize();
+
+            _resizeObs = new ResizeObserver(applySize);
+            _resizeObs.observe(container);
+
+            MilkViz.resume();
+        });
+    };
+
+    MilkViz.unmount = function () {
+        MilkViz.pause();
+        if (_resizeObs) { _resizeObs.disconnect(); _resizeObs = null; }
+        if (MilkViz.canvas && MilkViz.canvas.parentNode) {
+            MilkViz.canvas.parentNode.removeChild(MilkViz.canvas);
+        }
+        _container = null;
+    };
 })();
 
 // Temporary probe: confirms the script executed in the page's JS context.
