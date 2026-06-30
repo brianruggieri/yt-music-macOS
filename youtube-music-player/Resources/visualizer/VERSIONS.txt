@@ -6,17 +6,22 @@ butterchurn-presets 2.4.7  https://unpkg.com/butterchurn-presets@2.4.7/lib/butte
 
 Both licenses: MIT
 
-Global names (verified by reading UMD wrapper of each file)
------------------------------------------------------------
-window.butterchurn
+Global names (CORRECTED — verified at RUNTIME in WKWebView, Spike B)
+-------------------------------------------------------------------
+IMPORTANT: both UMD bundles are built WITHOUT libraryExport:'default', so each
+window global is the webpack module *namespace* — the real API lives under
+`.default`. Always resolve as `window.<name>.default || window.<name>`.
+
+window.butterchurn.default   (NOT window.butterchurn directly)
   createVisualizer(audioContext, canvas, {width, height, pixelRatio}) -> Visualizer
+  isSupported()
   Visualizer#connectAudio(AudioNode)    -- connect an AudioNode as the audio input
   Visualizer#loadPreset(preset, blendTime)
   Visualizer#render()
   Visualizer#setRendererSize(width, height)
 
-window.butterchurnPresets
-  butterchurnPresets.getPresets() -> { [name: string]: preset }
+window.butterchurnPresets.default   (resolve the same way)
+  getPresets() -> { [name: string]: preset }
 
 Node-graph recipe (proven by Spike B harness in feed-spike.js)
 --------------------------------------------------------------
@@ -26,8 +31,9 @@ AudioContext
        |- AnalyserNode                    -- for level readout in HUD
        |- GainNode(gain=0) -> destination -- keeps graph pulled (required)
 
-Blob URL note
--------------
+Blob URL note (RESOLVED at runtime)
+-----------------------------------
 The AudioWorkletProcessor is loaded via a Blob URL in feed-spike.js.
-If YT Music's CSP blocks blob: in worker-src, ctx.audioWorklet.addModule()
-will throw and the HUD will show the error. Task 5 investigates the CSP fallback.
+RESULT: ctx.audioWorklet.addModule(blob:) SUCCEEDS under YT Music's CSP —
+blob: is NOT blocked in worker-src. Task 5 does NOT need a worklet CSP fallback;
+the blob-URL worklet path is proven good.

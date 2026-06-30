@@ -73,6 +73,16 @@
       return;
     }
 
+    // butterchurn 2.6.7 UMD is built without libraryExport:'default', so the
+    // global is the webpack module namespace — the real API is at `.default`.
+    var butterchurn = window.butterchurn.default || window.butterchurn;
+    var butterchurnPresets = window.butterchurnPresets.default || window.butterchurnPresets;
+    if (typeof butterchurn.createVisualizer !== 'function') {
+      setHUD(['FAIL: butterchurn.createVisualizer missing',
+              'window.butterchurn keys: ' + Object.keys(window.butterchurn).join(',')]);
+      return;
+    }
+
     var ctx = new (window.AudioContext || window.webkitAudioContext)();
     setHUD(['ctx.state: ' + ctx.state, 'Loading AudioWorklet...']);
 
@@ -84,6 +94,7 @@
 
     ctx.audioWorklet.addModule(blobUrl).then(function () {
       URL.revokeObjectURL(blobUrl);
+      try {
 
       var worklet = new AudioWorkletNode(ctx, 'sine-sweep', {
         numberOfOutputs: 1,
@@ -102,13 +113,13 @@
       worklet.connect(analyser);
 
       // Butterchurn visualizer.
-      var viz = window.butterchurn.createVisualizer(ctx, canvas, {
+      var viz = butterchurn.createVisualizer(ctx, canvas, {
         width: canvas.width,
         height: canvas.height,
         pixelRatio: 1
       });
 
-      var presets = window.butterchurnPresets.getPresets();
+      var presets = butterchurnPresets.getPresets();
       var names = Object.keys(presets);
       if (names.length > 0) {
         viz.loadPreset(presets[names[0]], 0);
@@ -155,14 +166,23 @@
         }, { once: true });
       }
 
+      } catch (e) {
+        // Worklet loaded fine; failure is downstream (NOT a CSP/blob issue).
+        setHUD([
+          'ctx.state: ' + ctx.state,
+          'AudioWorklet: OK (blob loaded)',
+          'FAIL after load: ' + String(e).substring(0, 80)
+        ]);
+      }
     }).catch(function (err) {
+      // Only addModule() rejection lands here — this IS the CSP/blob signal.
       URL.revokeObjectURL(blobUrl);
       setHUD([
         'ctx.state: ' + ctx.state,
-        'FAIL: addModule(blob) threw:',
+        'FAIL: addModule(blob) REJECTED:',
         String(err).substring(0, 80),
-        'CSP likely blocks blob: in worker-src',
-        'Task 5 must investigate CSP fallback'
+        'CSP blocks blob: in worker-src',
+        'Task 5 must use CSP fallback for the worklet'
       ]);
     });
   }

@@ -56,6 +56,9 @@ enum AudioTapSpike {
     /// Nonisolated so it can run on a background queue (keeps the UI responsive
     /// and lets the TCC prompt appear while we measure).
     nonisolated static func runAll() {
+        // stdout is block-buffered when piped (not a TTY); unbuffer so RMS lines
+        // appear live instead of only flushing when the app exits.
+        setvbuf(stdout, nil, _IONBF, 0)
         print("===== AUDIO TAP SPIKE (Task 1 / Spike A) =====")
         guard #available(macOS 14.4, *) else {
             print("[spike] macOS 14.4+ required for Core Audio process taps; this OS is too old.")
@@ -69,13 +72,18 @@ enum AudioTapSpike {
         // (i) own / host PID
         probe(name: "hostPID(\(ownPID))", target: .pids([ownPID]))
 
-        // (ii) WebKit child processes (WebContent / GPU)
+        // (ii) WebKit child processes (WebContent / GPU) — probe EACH individually.
+        // Bundling them into one tap meant a single PID without an audio object
+        // aborted the whole probe; per-PID isolation tells us exactly which child
+        // carries the music and skips the duds.
         let kids = webKitChildPIDs(of: ownPID)
         if kids.isEmpty {
             print("[spike] webkitChildPIDs -> none discovered (is a track loaded in the webview?)")
         } else {
             print("[spike] webkitChildPIDs -> \(kids)")
-            probe(name: "webkitChildPIDs\(kids)", target: .pids(kids))
+            for kid in kids {
+                probe(name: "webkitChild(\(kid))", target: .pids([kid]))
+            }
         }
 
         // (iii) system default output (global tap, no exclusions)
