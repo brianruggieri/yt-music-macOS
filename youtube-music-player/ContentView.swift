@@ -19,6 +19,9 @@ struct ContentView: View {
     @State private var importCoordinator: ImportCoordinator?
     @State private var diagnosticResult: String?
 
+    // Shares the "themeMode" key with the menu Picker in youtube_music_playerApp.
+    @AppStorage("themeMode") private var themeModeRaw = ThemeMode.system.rawValue
+
     var body: some View {
         VStack(spacing: 0) {
             // Window header for dragging
@@ -49,6 +52,9 @@ struct ContentView: View {
                     webViewModel.webView?.reload()
                 })
             }
+        }
+        .onChange(of: themeModeRaw) { _, raw in
+            webViewModel.applyTheme(ThemeMode(rawValue: raw) ?? .system)
         }
         .onChange(of: importLauncher.isPresented) { _, presented in
             guard let coordinator = importCoordinator else { return }

@@ -11,6 +11,9 @@ import SwiftUI
 struct youtube_music_playerApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
 
+    // Shares the "themeMode" key with ContentView, which pushes changes to the webview.
+    @AppStorage("themeMode") private var themeModeRaw = ThemeMode.system.rawValue
+
     var body: some Scene {
         WindowGroup {
             ContentView()
@@ -18,6 +21,13 @@ struct youtube_music_playerApp: App {
         .windowStyle(.hiddenTitleBar)
         .defaultSize(width: 1200, height: 800)
         .commands {
+            CommandGroup(after: .toolbar) {
+                Picker("Appearance", selection: $themeModeRaw) {
+                    ForEach(ThemeMode.allCases) { mode in
+                        Text(mode.label).tag(mode.rawValue)
+                    }
+                }
+            }
             CommandGroup(after: .newItem) {
                 Button("Import from Spotify…") {
                     ImportLauncher.shared.isPresented = true

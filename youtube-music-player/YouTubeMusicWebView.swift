@@ -2,10 +2,50 @@ import AppKit
 import SwiftUI
 import WebKit
 
+// User's theme choice. We don't recolor anything ourselves for this — forcing the
+// WKWebView's NSAppearance flips its `prefers-color-scheme`, which the light-theme
+// engine already follows (seed + `mq` change listener), so the whole existing
+// pipeline reacts for free. `.system` (nil appearance) = today's behavior.
+enum ThemeMode: String, CaseIterable, Identifiable {
+    case system, light, dark
+    var id: String { rawValue }
+    var label: String {
+        switch self {
+        case .system: return "System"
+        case .light:  return "Light"
+        case .dark:   return "Dark"
+        }
+    }
+    var appearance: NSAppearance? {
+        switch self {
+        case .system: return nil   // inherit app / macOS appearance
+        case .light:  return NSAppearance(named: .aqua)
+        case .dark:   return NSAppearance(named: .darkAqua)
+        }
+    }
+    // Resolved darkness for the document-start seed; `.system` reads the live appearance.
+    var isDark: Bool {
+        switch self {
+        case .light:  return false
+        case .dark:   return true
+        case .system: return NSApp.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        }
+    }
+    static var stored: ThemeMode {
+        ThemeMode(rawValue: UserDefaults.standard.string(forKey: "themeMode") ?? "") ?? .system
+    }
+}
+
 @Observable
 @MainActor
 class YouTubeMusicViewModel {
     weak var webView: WKWebView?
+
+    // Force the webview's appearance to the chosen mode; the light-theme engine
+    // picks up the resulting prefers-color-scheme change on its own.
+    func applyTheme(_ mode: ThemeMode) {
+        webView?.appearance = mode.appearance
+    }
 
     // Background color of YT Music's nav bar, mirrored onto the native window
     // header so it tracks the web app's theme (dark / light / system). Defaults
@@ -245,7 +285,8 @@ struct YouTubeMusicWebView: NSViewRepresentable {
         // Seed the light-theme engine with the real system appearance at document
         // start — a WKWebView's prefers-color-scheme isn't reliably settled this early,
         // so without this the theme can miss light mode on load until a system toggle.
-        let isDark = NSApp.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        let mode = ThemeMode.stored
+        let isDark = mode.isDark
         let seedScript = WKUserScript(source: "window.__ytmNativeDark = \(isDark ? "true" : "false");",
                                       injectionTime: .atDocumentStart, forMainFrameOnly: true)
         config.userContentController.addUserScript(seedScript)   // before the engine, so it reads the seed
@@ -262,6 +303,7 @@ struct YouTubeMusicWebView: NSViewRepresentable {
         webView.uiDelegate = context.coordinator
         webView.customUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15"
         webView.setValue(false, forKey: "drawsBackground")
+        webView.appearance = mode.appearance   // force light/dark; nil = follow system
 
         viewModel.webView = webView
 
