@@ -358,7 +358,13 @@
     // Re-apply theme-dependent chrome when the page theme swaps at runtime: the host padding
     // frame color and the toggle's light/dark styling. Driven by the data-ytm-mode observer
     // below (the light engine flips that attribute on every swap).
+    var _lastDark = null;
     function reTheme() {
+        // The light engine re-stamps data-ytm-mode every tick (~300ms), firing this observer
+        // even when the theme didn't change. Only do work on an actual light<->dark swap.
+        var d = currentDark();
+        if (d === _lastDark) return;
+        _lastDark = d;
         if (_canvasHost && _active) {
             _canvasHost.style.background = (document.fullscreenElement === _canvasHost) ? '#000' : pageBgColor();
         }
