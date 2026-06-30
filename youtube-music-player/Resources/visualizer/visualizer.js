@@ -244,6 +244,16 @@
         return { left, top, width: Math.max(0, right - left), height: Math.max(0, bottom - top) };
     }
 
+    // Current theme. __ytmNativeDark is a load-time seed (NSApp appearance) that is never
+    // updated, so after a runtime light/dark swap it's stale. The light engine keeps
+    // documentElement[data-ytm-mode] current on every swap — prefer it, seed as fallback.
+    function currentDark() {
+        var m = document.documentElement.getAttribute('data-ytm-mode');
+        if (m === 'light') return false;
+        if (m === 'dark') return true;
+        return (window.__ytmNativeDark === true || window.__ytmNativeDark === 'true');
+    }
+
     // The effective page background behind the stage — walk up from the player page to the
     // first opaque background. Used to tint the host padding frame so it blends with the page
     // (off-white in light, near-black in dark) in whatever theme YT is currently rendering.
@@ -254,7 +264,7 @@
             if (bg && bg !== 'rgba(0, 0, 0, 0)' && bg !== 'transparent') return bg;
             el = el.parentElement;
         }
-        return (window.__ytmNativeDark === true || window.__ytmNativeDark === 'true') ? '#0f0f0f' : '#F3F3F3';
+        return currentDark() ? '#0f0f0f' : '#F3F3F3';
     }
 
     // Position the fixed canvas host over the computed stage rect, then resize the canvas.
@@ -342,7 +352,18 @@
         injectToggleCss();
         container.classList.add('milkviz-styled');
         container.classList.remove('milkviz-light', 'milkviz-dark');
-        container.classList.add(window.__ytmNativeDark ? 'milkviz-dark' : 'milkviz-light');
+        container.classList.add(currentDark() ? 'milkviz-dark' : 'milkviz-light');
+    }
+
+    // Re-apply theme-dependent chrome when the page theme swaps at runtime: the host padding
+    // frame color and the toggle's light/dark styling. Driven by the data-ytm-mode observer
+    // below (the light engine flips that attribute on every swap).
+    function reTheme() {
+        if (_canvasHost && _active) {
+            _canvasHost.style.background = (document.fullscreenElement === _canvasHost) ? '#000' : pageBgColor();
+        }
+        var c = findSegmentContainer();
+        if (c && c.classList.contains('milkviz-styled')) { styleSegContainer(c); killButtonBorders(c); }
     }
 
     // Single source of truth for which segment LOOKS selected — exactly one.
@@ -388,7 +409,7 @@
     function killButtonBorders(container) {
         const c = container || document.querySelector('.av-toggle.milkviz-styled');
         if (!c) return;
-        const dark = (window.__ytmNativeDark === true || window.__ytmNativeDark === 'true');
+        const dark = currentDark();
         // Light mode: strip the engine's inline border off the track container too (dark
         // keeps its subtle CSS track border). Buttons never carry a border in either theme.
         if (!dark) { c.style.setProperty('border', 'none', 'important'); }
@@ -406,7 +427,7 @@
         _borderObs = new MutationObserver(function () {
             const c = document.querySelector('.av-toggle.milkviz-styled');
             if (!c) return;
-            const dark = (window.__ytmNativeDark === true || window.__ytmNativeDark === 'true');
+            const dark = currentDark();
             // children should never have a border; in light, the container shouldn't either.
             const els = (!dark) ? [c].concat(Array.from(c.children)) : Array.from(c.children);
             const hasBorder = els.some(function (el) {
@@ -874,6 +895,14 @@
         document.head.appendChild(css);
     }
 
+    // Called by native (in response to the fs button's 'enterFullscreen' message) so the
+    // request runs without transient activation — the only context WebKit accepts here.
+    MilkViz.enterFullscreen = function () {
+        if (!_canvasHost || document.fullscreenElement) return;
+        var req = _canvasHost.requestFullscreen || _canvasHost.webkitRequestFullscreen;
+        if (req) req.call(_canvasHost);
+    };
+
     function addFullscreenControl() {
         if (_fsBtn || !_canvasHost) return;
         injectFsCss();
@@ -904,12 +933,15 @@
         // canvas.contains() check passes it through; stopPropagation is belt-and-braces.
         btn.addEventListener('click', function (e) {
             e.stopPropagation();
-            if (!document.fullscreenElement) {
-                const req = _canvasHost.requestFullscreen || _canvasHost.webkitRequestFullscreen;
-                if (req) req.call(_canvasHost);
-            } else {
+            if (document.fullscreenElement) {
                 document.exitFullscreen();
+                return;
             }
+            // A real click carries transient activation, and WebKit rejects a gesture-initiated
+            // element requestFullscreen here with a TypeError (fullscreenerror). Bounce through
+            // native: it re-issues the request via evaluateJavaScript (no activation), which
+            // WebKit accepts. enterFullscreen() below is what native calls back into.
+            postVizAction('enterFullscreen');
         });
 
         _canvasHost.appendChild(btn);
@@ -991,6 +1023,10 @@
         // MutationObserver re-injects after SPA navigation removes our segment.
         const obs = new MutationObserver(scheduleInjectCheck);
         obs.observe(document.body, { childList: true, subtree: true });
+
+        // Re-theme the host frame + toggle when the light engine flips the page theme.
+        new MutationObserver(reTheme).observe(document.documentElement,
+            { attributes: true, attributeFilter: ['data-ytm-mode'] });
     }
 
     if (document.readyState === 'loading') {

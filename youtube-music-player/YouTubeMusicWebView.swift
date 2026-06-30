@@ -509,6 +509,12 @@ struct YouTubeMusicWebView: NSViewRepresentable {
                     switch action {
                     case "modeOn":  if let wv = self.webView { self.startVisualizerFeed(wv) }
                     case "modeOff": self.stopVisualizerFeed()
+                    case "enterFullscreen":
+                        // A real user gesture makes WebKit reject the visualizer's element
+                        // requestFullscreen (TypeError). Re-issuing it from here via
+                        // evaluateJavaScript runs it WITHOUT transient activation, which WebKit
+                        // accepts — so the click bounces through native to actually go fullscreen.
+                        self.webView?.evaluateJavaScript("window.MilkViz && MilkViz.enterFullscreen && MilkViz.enterFullscreen()")
                     default:        break
                     }
                 }
