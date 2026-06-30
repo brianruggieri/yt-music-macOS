@@ -425,10 +425,16 @@ struct YouTubeMusicWebView: NSViewRepresentable {
                     let t = makeFeedTimer(webView)
                     feedTimer = t
                     t.resume()
+                    // Resume the page's rAF render loop too (it was paused when last gated off).
+                    webView.evaluateJavaScript("window.MilkViz && window.MilkViz.resume()")
                 }
             } else {
+                let wasRunning = feedTimer != nil || audioTap != nil
                 feedTimer?.cancel(); feedTimer = nil
                 audioTap?.stop(); audioTap = nil
+                // Stop the page's rAF render loop so a backgrounded/minimized/paused visualizer
+                // does no per-frame work (the native tap+timer are already stopped above).
+                if wasRunning { webView.evaluateJavaScript("window.MilkViz && window.MilkViz.pause()") }
             }
         }
 
@@ -490,6 +496,13 @@ struct YouTubeMusicWebView: NSViewRepresentable {
             } else if message.name == "visualizer",
                       let body = message.body as? [String: Any],
                       let action = body["action"] as? String {
+                // Only honor capture commands from a real YT Music page. This handler is
+                // registered for EVERY page in the WebView, so without validating the sender
+                // an allowed remote page (the accounts.google.com sign-in flow, youtube.com,
+                // etc.) could post modeOn and start the native audio tap. Gate on the frame's
+                // own security origin (trusted, not page-supplied body data).
+                let host = message.frameInfo.securityOrigin.host
+                guard host == "music.youtube.com" || host.hasSuffix(".music.youtube.com") else { return }
                 // Hop to the MainActor (this handler is nonisolated) before touching
                 // the MainActor-isolated feed lifecycle.
                 Task { @MainActor in
