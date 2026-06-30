@@ -157,6 +157,9 @@ window.__vizScriptLoaded = true;
         _container = container;
 
         ensureInit().then(function () {
+            // Bail if unmount (or a re-mount) changed _container while init was async —
+            // otherwise a stale closure restarts the rAF loop on a detached canvas.
+            if (_container !== container) return;
             // Guard against double-mount leaking the prior ResizeObserver.
             if (_resizeObs) { _resizeObs.disconnect(); _resizeObs = null; }
 
