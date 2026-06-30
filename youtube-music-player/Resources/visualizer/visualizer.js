@@ -75,8 +75,9 @@
     // Called ~60 Hz by native with base64 of interleaved-stereo Float32LE.
     // The first feeds kick off async init and are dropped until the node exists.
     window.__milkFeed = function (b64) {
-        // First feed since activation cancels the no-audio fallback timer (Task 11).
-        if (!_feedArrived) { _feedArrived = true; clearNoAudioTimer(); }
+        // First feed since activation cancels the no-audio fallback timer, and arms the
+        // silent-feed denial check (feed flowing but level stays 0 while playing).
+        if (!_feedArrived) { _feedArrived = true; clearNoAudioTimer(); armSilentCheck(); }
         if (!node) { ensureInit(); return; }
         // AudioContext may start suspended under the autoplay policy; resume so
         // the graph actually pulls the worklet. May require a page gesture.
@@ -582,6 +583,7 @@
     let _feedArrived = false;    // any __milkFeed call since last activation
     let _statusArrived = false;  // any nativeStatus call since last activation
     let _noAudioTimer = null;    // ~3s fallback timer armed on activation
+    let _silentCheckTimer = null; // ~5s denial check armed on first feed
 
     function clearStatusOverlay() {
         if (_statusOverlay) { _statusOverlay.remove(); _statusOverlay = null; }
@@ -643,6 +645,32 @@
 
     function clearNoAudioTimer() {
         if (_noAudioTimer) { clearTimeout(_noAudioTimer); _noAudioTimer = null; }
+        if (_silentCheckTimer) { clearTimeout(_silentCheckTimer); _silentCheckTimer = null; }
+    }
+
+    function isPlaying() {
+        if (navigator.mediaSession && navigator.mediaSession.playbackState) {
+            return navigator.mediaSession.playbackState === 'playing';
+        }
+        var v = document.querySelector('video');
+        return !!(v && !v.paused && v.currentTime > 0);
+    }
+
+    // Denial symptom: PCM frames ARE flowing (feed arrived) but the analyser stays silent
+    // while a track is clearly playing -> Audio Capture was denied/revoked (capture returns
+    // silence, not a start() error). This is the only reliable denial signal, so it's where
+    // we surface the System Settings guidance (the start-failure path is generic on purpose).
+    function armSilentCheck() {
+        if (_silentCheckTimer) clearTimeout(_silentCheckTimer);
+        _silentCheckTimer = setTimeout(function () {
+            _silentCheckTimer = null;
+            if (_active && isPlaying() && MilkViz.audioLevel() < 0.0005) {
+                showStatusOverlay(
+                    'No audio captured — permission may be needed\n' +
+                    'System Settings > Privacy & Security > Audio Capture',
+                    true);
+            }
+        }, 5000);
     }
 
     // Armed on activation: if no __milkFeed and no nativeStatus arrive within ~3s,
@@ -924,10 +952,18 @@
         }, 200);
     }
 
-    // Boot the segment observer. Gated entirely on __ytmVizSupported.
+    // Boot the segment observer. Gated on __ytmVizSupported AND being on a YT Music page.
     function startSegObserver() {
         if (!window.__ytmVizSupported) {
             console.log('MilkViz: __ytmVizSupported falsy — visualizer toggle disabled');
+            return;
+        }
+        // These user scripts also run on allowed full-page navigations (e.g. the
+        // accounts.google.com sign-in flow). Never inject the toggle/overlay or start a
+        // tap off music.youtube.com — there's no Song/Video control there and it would be
+        // an out-of-place affordance capturing audio on an unrelated page.
+        if (!/(^|\.)music\.youtube\.com$/.test(location.hostname)) {
+            console.log('MilkViz: not a YT Music page (' + location.hostname + ') — skipping injection');
             return;
         }
 

@@ -509,6 +509,18 @@ struct YouTubeMusicWebView: NSViewRepresentable {
         // login keeps working. When in doubt, allow — stranding the user is worse
         // than leaking one unexpected navigation into the WebView.
         //
+        // A full-page navigation (reload of music.youtube.com, or an allowed cross-origin
+        // nav like the sign-in flow) destroys the page that owns the visualizer WITHOUT it
+        // getting to post modeOff. Tear down the tap + 60Hz feed here so capture and the
+        // evaluateJavaScript loop don't keep running against the new/destroyed page. SPA
+        // route changes within YT Music don't fire this, so the active visualizer survives
+        // normal in-app navigation. Delivered on the main thread (assumeIsolated is sound).
+        func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+            MainActor.assumeIsolated {
+                if modeActive { stopVisualizerFeed() }
+            }
+        }
+
         // ponytail: permit-list; add entries if new Google auth subdomains appear
         func webView(
             _ webView: WKWebView,
