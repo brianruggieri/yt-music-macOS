@@ -2,10 +2,50 @@ import AppKit
 import SwiftUI
 import WebKit
 
+// User's theme choice. We don't recolor anything ourselves for this — forcing the
+// WKWebView's NSAppearance flips its `prefers-color-scheme`, which the light-theme
+// engine already follows (seed + `mq` change listener), so the whole existing
+// pipeline reacts for free. `.system` (nil appearance) = today's behavior.
+enum ThemeMode: String, CaseIterable, Identifiable {
+    case system, light, dark
+    var id: String { rawValue }
+    var label: String {
+        switch self {
+        case .system: return "System"
+        case .light:  return "Light"
+        case .dark:   return "Dark"
+        }
+    }
+    var appearance: NSAppearance? {
+        switch self {
+        case .system: return nil   // inherit app / macOS appearance
+        case .light:  return NSAppearance(named: .aqua)
+        case .dark:   return NSAppearance(named: .darkAqua)
+        }
+    }
+    // Resolved darkness for the document-start seed; `.system` reads the live appearance.
+    var isDark: Bool {
+        switch self {
+        case .light:  return false
+        case .dark:   return true
+        case .system: return NSApp.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        }
+    }
+    static var stored: ThemeMode {
+        ThemeMode(rawValue: UserDefaults.standard.string(forKey: "themeMode") ?? "") ?? .system
+    }
+}
+
 @Observable
 @MainActor
 class YouTubeMusicViewModel {
     weak var webView: WKWebView?
+
+    // Force the webview's appearance to the chosen mode; the light-theme engine
+    // picks up the resulting prefers-color-scheme change on its own.
+    func applyTheme(_ mode: ThemeMode) {
+        webView?.appearance = mode.appearance
+    }
 
     // Background color of YT Music's nav bar, mirrored onto the native window
     // header so it tracks the web app's theme (dark / light / system). Defaults
@@ -58,16 +98,20 @@ struct YouTubeMusicWebView: NSViewRepresentable {
         config.preferences.javaScriptCanOpenWindowsAutomatically = true
 
         // Inject scrollbar CSS at document start
-        // Thumb colors are read from a CSS variable on <html>; the theme observer
-        // script flips data-ytm-theme so the scrollbars follow YT Music's light/dark.
+        // Thumb colors are read from a CSS variable on <html>; the light-theme engine
+        // sets data-ytm-mode (authoritative — driven by macOS appearance, set before
+        // first paint and degraded-aware), so the scrollbars follow the SAME signal as
+        // the rest of light mode. (The old data-ytm-theme luma-guess observer could leave
+        // this unset → a near-white thumb invisible on the light page.) The light thumb is
+        // a neutral medium grey at macOS-overlay weight so it actually reads on #f3f3f3.
         let css = """
             html {
                 --ytm-sb-thumb: rgba(255, 255, 255, 0.15);
                 --ytm-sb-thumb-hover: rgba(255, 255, 255, 0.25);
             }
-            html[data-ytm-theme="light"] {
-                --ytm-sb-thumb: rgba(0, 0, 0, 0.18);
-                --ytm-sb-thumb-hover: rgba(0, 0, 0, 0.30);
+            html[data-ytm-mode="light"] {
+                --ytm-sb-thumb: rgba(0, 0, 0, 0.32);
+                --ytm-sb-thumb-hover: rgba(0, 0, 0, 0.45);
             }
             *, *::before, *::after {
                 scrollbar-width: thin !important;
@@ -241,7 +285,8 @@ struct YouTubeMusicWebView: NSViewRepresentable {
         // Seed the light-theme engine with the real system appearance at document
         // start — a WKWebView's prefers-color-scheme isn't reliably settled this early,
         // so without this the theme can miss light mode on load until a system toggle.
-        let isDark = NSApp.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        let mode = ThemeMode.stored
+        let isDark = mode.isDark
         let seedScript = WKUserScript(source: "window.__ytmNativeDark = \(isDark ? "true" : "false");",
                                       injectionTime: .atDocumentStart, forMainFrameOnly: true)
         config.userContentController.addUserScript(seedScript)   // before the engine, so it reads the seed
@@ -252,8 +297,13 @@ struct YouTubeMusicWebView: NSViewRepresentable {
 
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.navigationDelegate = context.coordinator
+        // uiDelegate supplies the native file picker for <input type=file> (e.g. the
+        // "Edit thumbnail" playlist-cover upload). Without it WKWebView silently drops
+        // the open-panel request and the button does nothing.
+        webView.uiDelegate = context.coordinator
         webView.customUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15"
         webView.setValue(false, forKey: "drawsBackground")
+        webView.appearance = mode.appearance   // force light/dark; nil = follow system
 
         viewModel.webView = webView
 
@@ -270,11 +320,60 @@ struct YouTubeMusicWebView: NSViewRepresentable {
         Coordinator(viewModel: viewModel)
     }
 
-    class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
+    class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler, WKUIDelegate {
         var viewModel: YouTubeMusicViewModel
 
         init(viewModel: YouTubeMusicViewModel) {
             self.viewModel = viewModel
+        }
+
+        // MARK: - File uploads
+        //
+        // WKWebView has no built-in file picker — a page's <input type=file>.click()
+        // is forwarded here, and if unhandled it's a no-op. YT Music's "Edit thumbnail"
+        // (playlist cover upload) is the visible case: the button looked dead because
+        // the open-panel request had nowhere to go. Bridge it to a native NSOpenPanel.
+        func webView(_ webView: WKWebView,
+                     runOpenPanelWith parameters: WKOpenPanelParameters,
+                     initiatedByFrame frame: WKFrameInfo,
+                     completionHandler: @escaping ([URL]?) -> Void) {
+            let panel = NSOpenPanel()
+            panel.canChooseFiles = true
+            panel.canChooseDirectories = false
+            panel.allowsMultipleSelection = parameters.allowsMultipleSelection
+            let finish: (NSApplication.ModalResponse) -> Void = { response in
+                let cancelled = response != .OK
+                completionHandler(cancelled ? nil : panel.urls)
+                // Hand first-responder back to the web view so WebKit resumes dispatching
+                // events to the page.
+                webView.window?.makeFirstResponder(webView)
+                // On Cancel, WKWebView is slow to deliver the <input type=file> `cancel`
+                // event, so YT's editor overlay + dimming backdrop outlive the panel by a
+                // few seconds. We already KNOW the user cancelled, so don't wait for that
+                // event — tear the overlay down ourselves: close the image-editor dialog
+                // (which drops its backdrop) and shut any backdrop left orphaned. Scoped to
+                // the image editor so no other dialog is touched; only runs on Cancel, so a
+                // real pick (which opens the crop dialog) is never closed.
+                if cancelled {
+                    webView.evaluateJavaScript("""
+                    (function(){
+                      document.querySelectorAll('tp-yt-paper-dialog').forEach(function(d){
+                        if (d.querySelector && d.querySelector('yt-image-editor-renderer') && d.close) d.close();
+                      });
+                      document.querySelectorAll('tp-yt-iron-overlay-backdrop').forEach(function(b){
+                        if (b.close) b.close(); else b.remove();
+                      });
+                    })();
+                    """, completionHandler: nil)
+                }
+            }
+            // Sheet (not a detached panel) so the window stays key and dismissal returns
+            // control to it at once; fall back to a free panel if there's no window yet.
+            if let window = webView.window {
+                panel.beginSheetModal(for: window, completionHandler: finish)
+            } else {
+                panel.begin(completionHandler: finish)
+            }
         }
 
         func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {

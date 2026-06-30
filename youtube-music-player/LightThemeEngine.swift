@@ -179,7 +179,57 @@ enum LightThemeEngine {
         // hover are translucent-black overlays that should stay dark; the video/art
         // region is a neutral letterbox.
         const SURFACE_FIXES = [
-            ['.av-toggle, .video-button', 'background-color: var(--ytmusic-color-black1)'],
+            // Song/Video player toggle (ytmusic-av-toggle). Mirror dark mode's own logic:
+            // there the track is dark (#212121) and YT lifts the SELECTED segment onto a
+            // lighter white-alpha fill (`[playback-mode] .{song,video}-button`), while the
+            // unselected segment stays the track colour. Inverting that for light: the track
+            // and unselected segment are the same recessed grey (already produced by the
+            // token inversion, ~#dedede), and the selected segment becomes a RAISED WHITE
+            // pill (+ soft shadow). We key off YT's OWN selection signal — the host
+            // `playback-mode` attribute (ATV→song, OMV→video) — and repeat its `.ytmusic-av-toggle`
+            // class so we out-specify the inverted `.song-button.ytmusic-av-toggle` grey rule.
+            // The earlier fix painted track AND both buttons one flat grey, which is exactly
+            // why neither side read as selected.
+            ['.av-toggle', 'background-color: var(--ytmusic-color-black1)'],
+            ['ytmusic-av-toggle[playback-mode="ATV_PREFERRED"] .song-button.ytmusic-av-toggle, ytmusic-av-toggle[playback-mode="OMV_PREFERRED"] .video-button.ytmusic-av-toggle',
+                'background-color: rgb(255, 255, 255); box-shadow: 0 1px 2px rgba(0,0,0,0.2)'],
+            // Modal scrim (tp-yt-iron-overlay-backdrop — the dimming layer behind every
+            // dialog: edit-playlist, add-to-playlist, etc.). YT colours it from an inverted
+            // iron/paper token, so in light mode it flips to near-WHITE — clicking a dialog
+            // open then WASHES the page out (desaturated, low-contrast) instead of darkening
+            // it, and the white dialog on a washed-white page is nearly invisible. A modal
+            // backdrop must always be a DARK translucent scrim (Material and macOS both dim
+            // dark, light theme or not). Pin it dark (YT keeps its own ~0.3 opacity) so the
+            // page dims properly and the dialog on top pops.
+            ['tp-yt-iron-overlay-backdrop', 'background-color: #000000'],
+            // Edit-thumbnail / image-cropper dialog. Its tp-yt-paper-dialog is transparent
+            // (alpha 0) and NO child paints a surface — invisible over dark mode's dark page,
+            // but in light mode the cropper canvas, title and Cancel/Done float over the
+            // dimmed page with no card behind them: reads as a huge unbounded image with the
+            // track list bleeding through (the "layering" mess). Give just this dialog (scoped
+            // via :has) a real opaque light card. NOTHING else — the dialog is a fixed 632x741
+            // (it never scales with the viewport), so size caps are pointless, and an
+            // overflow/scroll cap would shift the canvas under the JS-positioned crop handles
+            // and misalign them. Background only.
+            ['tp-yt-paper-dialog:has(yt-image-editor-renderer)',
+                'background-color: rgb(255, 255, 255)'],
+            // Playlist "description" popup (#13): same transparent-dialog problem — a
+            // tp-yt-paper-dialog wrapping ytmusic-dismissable-dialog-renderer whose surface
+            // (--paper-dialog-background-color) is alpha-0 in light, so the track list bleeds
+            // through. Give it an opaque card (text/✕ are already dark).
+            ['tp-yt-paper-dialog:has(ytmusic-dismissable-dialog-renderer)',
+                'background-color: rgb(255, 255, 255); box-shadow: 0 1px 2px rgba(0,0,0,0.2)'],
+            // …and its close ✕ glyph: YT draws it white (for the dark fallback surface), so on
+            // the white card above it vanished. Pin the dialog's icons dark — including the
+            // svg <path> (its white comes from the path's own fill), so the ✕ shows.
+            ['ytmusic-dismissable-dialog-renderer yt-icon, ytmusic-dismissable-dialog-renderer yt-icon-button, ytmusic-dismissable-dialog-renderer svg, ytmusic-dismissable-dialog-renderer svg path',
+                'color: rgb(17, 17, 17); fill: rgb(17, 17, 17)'],
+            // Download toast (#15): tp-yt-paper-toast is an INVERSE-surface component — its
+            // surface stays light-grey in BOTH themes, but the engine's token inversion flips
+            // its dark text to near-white → invisible on the light snackbar (~1:1). Pin the
+            // text/icons dark (what dark mode already renders); leave the surface + blue "View".
+            ['tp-yt-paper-toast, tp-yt-paper-toast yt-formatted-string, ytmusic-notification-action-renderer #text, ytmusic-notification-action-renderer yt-icon, tp-yt-paper-toast svg',
+                'color: rgb(17, 17, 17); fill: rgb(17, 17, 17)'],
             // The immersive backdrop / scrolled nav bar fill is one element YT colors
             // inline from page content (a dark value the cascade can't reach). Pin it
             // to the light surface so both the header and the scroll bar read light.
@@ -199,9 +249,14 @@ enum LightThemeEngine {
             ['ytmusic-menu-popup-renderer yt-icon, ytmusic-menu-popup-renderer svg', 'color: rgb(20, 20, 20); fill: rgb(20, 20, 20)'],
             // Default for every play button: keep the triangle dark so the glyph stays
             // visible on a light circle (YT's knockout reads as near-white on near-white
-            // otherwise). Overlay play buttons that sit ON album/video art keep this
-            // neutral look — a red fill there turns into a red square over the art.
+            // otherwise).
             ['ytmusic-play-button-renderer yt-icon, ytmusic-play-button-renderer svg', 'color: rgb(3, 3, 3); fill: rgb(3, 3, 3)'],
+            // EXCEPTION — play buttons overlaid on album/video art (the thumbnail-overlay
+            // renderer: track-row hover buttons, playlist/album card buttons). These sit on
+            // imagery behind a dark hover scrim, exactly like dark mode, where YT keeps the
+            // triangle WHITE. The blanket dark rule above would paint them near-black on a
+            // dark scrim (invisible) — so re-whiten them here (more specific → wins).
+            ['ytmusic-item-thumbnail-overlay-renderer ytmusic-play-button-renderer yt-icon, ytmusic-item-thumbnail-overlay-renderer ytmusic-play-button-renderer svg', 'color: #ffffff; fill: #ffffff'],
             // Brand red, white triangle — ONLY the standalone circular play affordances:
             // the page header CTA and the left-bar (guide) playlist buttons. These are
             // real circular buttons, so a #f03 fill reads as a proper brand play button.
@@ -244,6 +299,48 @@ enum LightThemeEngine {
             // border-left, which we keep as YT's category cue.
             ['button.ytmusic-navigation-button-renderer',
                 'background-color: rgba(0,0,0,0.04); box-shadow: inset 0 0 0 1px rgba(0,0,0,0.16)'],
+            // YT "tonal" buttons — the guide's "New playlist" button and tonal buttons
+            // elsewhere — fill themselves with a translucent WHITE (rgba(255,255,255,0.1))
+            // that's invisible on the light page, so the button loses all boundary. Give the
+            // whole tonal class the SAME defined card the navigation buttons get: a subtle
+            // fill + a 1px inset hairline ring. Global by design (matches every tonal button),
+            // not a one-off — tonal buttons are *meant* to read as a filled surface.
+            ['button.ytSpecButtonShapeNextTonal',
+                'background-color: rgba(0,0,0,0.05); box-shadow: inset 0 0 0 1px rgba(0,0,0,0.16)'],
+            // --- QA batch (2026-06-29) ---
+            // Rounded hover (#3/#4/#7): on two-row cards the hover ripple (tp-yt-paper-ripple)
+            // and dark scrim (ytmusic-background-overlay-renderer) are SIBLINGS of the
+            // 8px-rounded thumbnail, so its overflow:hidden never clips them — they're clipped
+            // only by a.image-wrapper, which is border-radius:0, leaving square dark corners on
+            // the light page. The wrapper is already overflow:hidden, so rounding IT clips the
+            // image, ripple and scrim together. (Artist tiles are circular — verify they don't
+            // square; if so, add a 50% variant for those.)
+            ['ytmusic-two-row-item-renderer a.image-wrapper', 'border-radius: 8px'],
+            // Explore + genre buttons had no hover (#10/#11): YT's own hover goes solid #212121,
+            // invisible on the light surface. Deeper translucent-dark fill on hover.
+            ['button.ytmusic-navigation-button-renderer:hover', 'background-color: rgba(0,0,0,0.24)'],
+            // Genre/mood tiles (#11): drop the inset hairline ring, keeping ONLY YT's coloured
+            // left bar (matches the app's left-bar selection cue). Scoped to tiles carrying the
+            // inline stripe var, so the four Explore destination buttons keep their ring.
+            ['ytmusic-navigation-button-renderer[style*="left-stripe-color"] button.ytmusic-navigation-button-renderer',
+                'box-shadow: none'],
+            // Byline separators (#1): the "•"/"&" inherit YT's translucent secondary token,
+            // which inverts (alpha-damped) to ~8% black = invisible. The text-rescue can't reach
+            // them (the glyph span is <8px wide; .flex-column::before is a pseudo-element), so
+            // recolour them to match the rescued byline text (rgb 82,82,82). Recolouring the
+            // subtitle/complex-string parent is safe — the real text spans carry their own
+            // inline !important, so only the inheriting separators change.
+            ['ytmusic-responsive-list-item-renderer .secondary-flex-columns .flex-column::before',
+                'color: rgb(82,82,82)'],
+            ['ytmusic-responsive-header-renderer .subtitle, ytmusic-responsive-header-renderer .second-subtitle, ytmusic-responsive-list-item-renderer yt-formatted-string.complex-string',
+                'color: rgb(82,82,82)'],
+            // Multi-select checkboxes (#14): same damped ~8% token on the hollow-square svg;
+            // the icon-rescue skips it (fill alpha < 0.4 gate). Give the outline a visible
+            // weight, and a near-black filled box when checked.
+            ['yt-checkbox-renderer, yt-checkbox-renderer yt-icon, yt-checkbox-renderer svg',
+                'color: rgba(0,0,0,0.55); fill: rgba(0,0,0,0.55)'],
+            ['yt-checkbox-renderer[aria-checked="true"] yt-icon, yt-checkbox-renderer[aria-checked="true"] svg',
+                'color: rgb(13,13,13); fill: rgb(13,13,13)'],
         ];
 
         // Brand red, used on purpose in a FEW active/hover places so it keeps meaning
@@ -284,10 +381,21 @@ enum LightThemeEngine {
              'ytmusic-pivot-bar-item-renderer:focus-visible, ' +
              'ytmusic-responsive-list-item-renderer:focus-visible, ' +
              'ytmusic-chip-cloud-chip-renderer a:focus-visible, ' +
-             'yt-button-shape:focus-visible, input:focus-visible',
+             // NOT inputs/selects: text fields signal focus with their native Material
+             // underline (the line turns the accent colour) — a surrounding box ring is the
+             // wrong convention and double-rings the search pill (which keeps the rule below).
+             'yt-button-shape:focus-visible',
              'outline: 2px solid #1a73e8; outline-offset: 2px; border-radius: 6px'],
             ['ytmusic-search-box:focus-within',
              'outline: 2px solid #1a73e8; outline-offset: 1px; border-radius: 8px'],
+            // Text inputs/selects: suppress BOTH our ring (dropped above) AND the browser's
+            // default UA focus outline, so focus shows only via the native Material underline
+            // (dialog title/description/privacy) or the search pill's :focus-within ring above.
+            // Those are the visible indicators, so this still satisfies WCAG 2.4.7. EXCLUDE the
+            // input types whose ONLY focus cue is the outline (checkbox/radio/range/file) — they
+            // have no underline to fall back on, so they keep their native ring.
+            ['input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]):focus, input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]):focus-visible',
+                'outline: none'],
         ];
 
         // Grayscale + light? Used to gate literal text-color inversion: only flip
@@ -367,6 +475,17 @@ enum LightThemeEngine {
                             if (hasGradient(v) && hasColor(v)) decls.push('background-image: ' + invertColorsInString(v));
                         } else if (prop === 'background-color' || prop === 'background') {
                             if (c && isDarkOpaqueGray(c)) decls.push(prop + ': ' + invert(v));
+                            // Translucent LIGHT films are YT's hover/active highlights (chips,
+                            // pills, rows, icon buttons all "light up" via rgba(255,255,255,.1-.2)).
+                            // Left as-is they're invisible on the light page — every hover/press
+                            // does nothing. Flip them to the matching dark-alpha so the SAME
+                            // feedback reads on light. invert() damps heavy films; translucent
+                            // BLACK scrims are dark (isLightGray false) → untouched, stay dark.
+                            // …but NOT touch-feedback / ripple press layers: inverting their
+                            // translucent-white fill to translucent-dark paints a dark disc
+                            // behind icon-button glyphs (e.g. the ⋮ menu), and a dark glyph on
+                            // that disc loses all contrast. Leave those subtle.
+                            else if (c && c.a > 0 && c.a < 1 && isLightGray(c) && !/touch-feedback|ripple/i.test(rule.selectorText || '')) decls.push(prop + ': ' + invert(v));
                             else if (hasGradient(v) && hasColor(v)) decls.push(prop + ': ' + invertColorsInString(v));
                         } else if (isThemeToken(prop)) {
                             // Local --yt*/--paper* token redefinition (e.g. a popup setting
@@ -634,7 +753,17 @@ enum LightThemeEngine {
             //   • on a dark/coloured surface (e.g. the white triangle on the #f03 play button)
             //   • saturated/brand glyphs (semantic colour, conveyed redundantly)
             const mediaRects = [].slice.call(document.querySelectorAll('img, yt-img-shadow, [style*="background-image"]'))
-                .map(m => m.getBoundingClientRect()).filter(b => b.width > 24 && b.height > 24);
+                // Real media only: a background-image counts as "media" ONLY if it's an actual
+                // url() image — NOT a gradient. imgs always count.
+                .filter(m => m.tagName === 'IMG' || m.tagName === 'YT-IMG-SHADOW' || /url\(/i.test(getComputedStyle(m).backgroundImage))
+                // …and exclude the immersive full-bleed BACKDROP (a blurred cover image behind
+                // the whole page): a glyph over it isn't "on artwork", it's on the page, so it
+                // must stay dark. Match it by its OWNING container — robust on a narrow window,
+                // where a width cap alone would let a < cap-width backdrop slip through. The
+                // width cap stays as a backstop for any other full-bleed surface; foreground art
+                // (thumbnails/covers) is ≤ ~540px and not inside these immersive containers.
+                .filter(m => !m.closest('ytmusic-fullbleed-thumbnail, ytmusic-immersive-header-renderer, .background-gradient'))
+                .map(m => m.getBoundingClientRect()).filter(b => b.width > 24 && b.height > 24 && b.width < 700);
             const overMedia = (r) => { const cx = r.left + r.width / 2, cy = r.top + r.height / 2; return mediaRects.some(b => cx >= b.left && cx <= b.right && cy >= b.top && cy <= b.bottom); };
             for (const ic of document.querySelectorAll('button svg, a svg, [role="button"] svg, tp-yt-paper-icon-button svg, yt-icon svg')) {
                 if (iconFixedEls.has(ic)) continue;
@@ -645,7 +774,15 @@ enum LightThemeEngine {
                 let fc = (ist.fill && ist.fill !== 'none' && ist.fill !== 'rgba(0, 0, 0, 0)') ? toRGB(ist.fill) : toRGB(ist.color);
                 if (!fc || fc.a < 0.4) continue;
                 if (Math.max(fc.r, fc.g, fc.b) - Math.min(fc.r, fc.g, fc.b) > 40) continue;   // saturated → semantic, leave it
-                if (overMedia(ir)) continue;
+                // Over album/video art (#6): the neutral glyph should be WHITE, like dark mode
+                // (e.g. the ⋮ "More" button rides the thumbnail's gradient). The bulk inverter
+                // had flipped it near-black; re-whiten it here instead of leaving it dark.
+                if (overMedia(ir)) {
+                    ic.style.setProperty('fill', 'rgb(255, 255, 255)', 'important');
+                    ic.style.setProperty('color', 'rgb(255, 255, 255)', 'important');
+                    iconFixedEls.add(ic);
+                    continue;
+                }
                 const ibg = effectiveBg(ic).c;
                 if (relLum(ibg) < 0.5) continue;                  // dark/coloured surface → a light glyph is correct
                 if (ratio(relLum(fc), relLum(ibg)) >= 3) continue; // already fine
