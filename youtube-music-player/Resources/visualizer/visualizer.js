@@ -214,14 +214,26 @@ window.__vizScriptLoaded = true;
         }
     }
 
-    // Best-effort: find the YT Music player stage element.
-    function findStage() {
-        return (
-            document.querySelector('ytmusic-player') ||
-            document.querySelector('#player-container-inner') ||
-            document.querySelector('ytmusic-player-page') ||
-            null
-        );
+    // Best-effort: find the CONSISTENT center-stage content region — the big middle
+    // column between the top Song/Video toggle and the bottom player bar — NOT the
+    // <ytmusic-player> media element (which shrinks to album-art square vs 16:9 video,
+    // making the visualizer inherit a different size per entry point). Mounting into
+    // the media COLUMN keeps the visualizer the same size regardless of prior mode.
+    // Selectors are best-effort; logs which one matched so QA can confirm/refine.
+    function findStageRegion() {
+        const page = document.querySelector('ytmusic-player-page');
+        if (page) {
+            // #player is the media column inside the immersive now-playing page; its
+            // box is stable across Song/Video (the media letterboxes within it).
+            const region = page.querySelector('#player') ||
+                page.querySelector('#main-panel') || page;
+            console.log('MilkViz: stage region —', region.id || region.tagName);
+            return region;
+        }
+        const fallback = document.querySelector('#player-container-inner') ||
+            document.querySelector('ytmusic-player') || null;
+        if (fallback) console.log('MilkViz: stage region — fallback', fallback.tagName);
+        return fallback;
     }
 
     // Best-effort: find the Song/Video segmented control container.
@@ -229,12 +241,19 @@ window.__vizScriptLoaded = true;
     // Returns the parent container element, or null if not found.
     function findSegmentContainer() {
         // Strategy 1: ytmusic-segmented-buttons-renderer (most specific known selector).
+        // Drill to the element whose DIRECT children are the individual tabs, so Fix 4
+        // can deep-clone a real sibling tab (returning the renderer wrapper would not).
         const known = document.querySelector('ytmusic-segmented-buttons-renderer');
         if (known) {
             const t = known.textContent || '';
             if (/\bsong\b/i.test(t) && /\bvideo\b/i.test(t)) {
-                console.log('MilkViz: segment found — ytmusic-segmented-buttons-renderer');
-                return known;
+                const tabs = Array.from(known.querySelectorAll(
+                    '[role="tab"], tp-yt-paper-tab, ytmusic-tab, ytmusic-segmented-button'
+                ));
+                const songTab = tabs.find((el) => /^\s*song\s*$/i.test(el.textContent));
+                const row = (songTab && songTab.parentElement) ? songTab.parentElement : known;
+                console.log('MilkViz: segment found — ytmusic-segmented-buttons-renderer, row:', row.tagName);
+                return row;
             }
         }
 
@@ -270,53 +289,103 @@ window.__vizScriptLoaded = true;
         return null;
     }
 
+    // Learn how YT marks a segment "selected" by inspecting the live siblings, so we
+    // mirror its exact mechanism (works across light/dark + future theme tweaks).
+    // Returns { aria, attr, classes } describing the markers on the selected tab.
+    function getSegMarkers(siblings) {
+        const sel = siblings.find((s) =>
+            s.getAttribute('aria-selected') === 'true' ||
+            s.hasAttribute('selected') ||
+            /(?:^|[\s-])(?:selected|active|iron-selected)(?:$|[\s-])/i.test(s.className));
+        const classes = sel
+            ? Array.from(sel.classList).filter((c) => /select|active/i.test(c))
+            : [];
+        return {
+            aria: sel ? sel.getAttribute('aria-selected') === 'true' : true,
+            attr: sel ? sel.hasAttribute('selected') : false,
+            classes: classes.length ? classes : ['selected'],
+        };
+    }
+
+    function markSeg(el, m) {
+        if (m.aria) el.setAttribute('aria-selected', 'true');
+        if (m.attr) el.setAttribute('selected', '');
+        m.classes.forEach((c) => el.classList.add(c));
+    }
+
+    function clearSeg(el, m) {
+        el.setAttribute('aria-selected', 'false');
+        el.removeAttribute('selected');
+        m.classes.forEach((c) => el.classList.remove(c));
+    }
+
+    // Replace only the visible label text of a deep-cloned tab, preserving every
+    // wrapper/icon/class. Swaps the first non-empty text node (the label).
+    function setSegLabel(el, text) {
+        const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, null);
+        let n;
+        while ((n = walker.nextNode())) {
+            if (n.nodeValue && n.nodeValue.trim()) { n.nodeValue = text; break; }
+        }
+        if (!n) el.textContent = text;   // fallback: no text node found
+        if (el.hasAttribute('aria-label')) el.setAttribute('aria-label', text);
+    }
+
     // Inject a "Visualizer" 3rd tab into the segment container.
-    // Clones tag + class from a sibling so it inherits YT's light/dark theme.
+    // Fix 4: DEEP-clone a real (unselected) sibling tab so the pill inherits YT's
+    // exact markup, classes, inner spans, padding and border-radius in light/dark —
+    // then change only the id + visible label, and replicate YT's selected-state.
     function injectSegment(container) {
         if (container.querySelector('#milkviz-seg-btn')) return;  // already there
 
-        const siblings = Array.from(container.children);
+        const siblings = Array.from(container.children).filter((c) => c.id !== 'milkviz-seg-btn');
         if (siblings.length === 0) return;
 
-        const tmpl = siblings[0];
-        const btn = document.createElement(tmpl.tagName);
+        const markers = getSegMarkers(siblings);
+        const isSel = (el) =>
+            el.getAttribute('aria-selected') === 'true' || el.hasAttribute('selected') ||
+            markers.classes.some((c) => el.classList.contains(c));
+        // Clone an UNSELECTED sibling as template so default state is right.
+        const tmpl = siblings.find((s) => !isSel(s)) || siblings[0];
+
+        const btn = tmpl.cloneNode(true);   // deep clone: keeps full inner structure
         btn.id = 'milkviz-seg-btn';
-        btn.className = tmpl.className;
-        const role = tmpl.getAttribute('role');
-        if (role) btn.setAttribute('role', role);
-        btn.textContent = 'Visualizer';
+        clearSeg(btn, markers);             // ensure unselected default after clone
+        setSegLabel(btn, 'Visualizer');
         btn.style.cursor = 'pointer';
 
-        btn.addEventListener('click', () => {
+        btn.addEventListener('click', (e) => {
+            // Our tab is synthetic; stop YT's renderer from also handling it.
+            e.stopPropagation();
             if (!_active) {
-                siblings.forEach((sib) => {
-                    sib.removeAttribute('aria-selected');
-                    sib.removeAttribute('selected');
-                    sib.classList.remove('selected', 'iron-selected', 'tab-selected', 'active');
-                });
-                btn.setAttribute('aria-selected', 'true');
+                siblings.forEach((sib) => clearSeg(sib, markers));
+                markSeg(btn, markers);
                 MilkViz.setActive(true);
             } else {
-                btn.removeAttribute('aria-selected');
+                clearSeg(btn, markers);
                 MilkViz.setActive(false);
             }
         });
 
         // Clicking Song or Video deactivates the visualizer.
-        // capture:true so we run before YT's own handlers clear the selection.
+        // capture:true so we run before YT's own handlers re-mark selection.
         siblings.forEach((sib) => {
             sib.addEventListener('click', () => {
                 if (_active) {
-                    btn.removeAttribute('aria-selected');
+                    clearSeg(btn, markers);
                     MilkViz.setActive(false);
                 }
             }, true);
         });
 
         container.appendChild(btn);
+        if (_active) {   // SPA re-injection while active: reflect selected state
+            siblings.forEach((sib) => clearSeg(sib, markers));
+            markSeg(btn, markers);
+        }
         _segInjected = true;
-        console.log('MilkViz: Visualizer segment injected →',
-            container.tagName, container.id || container.className.slice(0, 40));
+        console.log('MilkViz: Visualizer segment injected (deep clone) →',
+            container.tagName, container.id || (container.className || '').slice(0, 40));
     }
 
     // Inject a floating fallback button when the segment control is absent.
@@ -361,20 +430,22 @@ window.__vizScriptLoaded = true;
             if (!_canvasHost) {
                 _canvasHost = document.createElement('div');
                 _canvasHost.id = 'milkviz-canvas-host';
-                const stage = findStage();
+                const stage = findStageRegion();
+                // pointer-events:auto so canvas clicks land on us (preset skip, Fix 3)
+                // instead of falling through to YT's play/pause.
                 if (stage) {
-                    // Overlay canvas on top of the player stage.
+                    // Overlay canvas filling the consistent center-stage region.
                     if (getComputedStyle(stage).position === 'static') {
                         stage.style.position = 'relative';
                     }
                     _canvasHost.style.cssText =
-                        'position:absolute;inset:0;z-index:9998;background:#000;';
+                        'position:absolute;inset:0;z-index:9998;background:#000;pointer-events:auto;';
                     stage.appendChild(_canvasHost);
                     console.log('MilkViz: canvas host overlaid on', stage.tagName);
                 } else {
                     // ponytail: fixed full-screen fallback when stage not found
                     _canvasHost.style.cssText =
-                        'position:fixed;inset:0;z-index:9998;background:#000;';
+                        'position:fixed;inset:0;z-index:9998;background:#000;pointer-events:auto;';
                     document.body.appendChild(_canvasHost);
                     console.log('MilkViz: canvas host as fixed overlay (stage not found)');
                 }
@@ -558,7 +629,10 @@ window.__vizScriptLoaded = true;
         }
     }
 
-    function _onCanvasClick() {
+    function _onCanvasClick(e) {
+        // Fix 3: the canvas now captures clicks (pointer-events:auto on the host).
+        // Stop the event so it does NOT reach YT's player toggle (play/pause).
+        if (e) { e.stopPropagation(); e.preventDefault(); }
         doLoadPreset(_presetIdx + 1, 2.7);
         scheduleCycle();
     }
@@ -610,20 +684,47 @@ window.__vizScriptLoaded = true;
     let _fsBtn = null;
     let _fsChangeHandler = null;
 
+    // Corner-bracket fullscreen icon matching YT's native control (used when the live
+    // control can't be cloned). Inherits currentColor so it tracks light/dark text.
+    const FS_ICON_SVG =
+        '<svg viewBox="0 0 36 36" width="100%" height="100%" fill="currentColor" aria-hidden="true">' +
+        '<path d="M10 16h2v-4h4v-2h-6v6zm14-6h-6v2h4v4h2v-6zm-2 16v-4h-2v6h6v-2h-4zM12 20h-2v6h6v-2h-4v-4z"/>' +
+        '</svg>';
+
     function addFullscreenControl() {
         if (_fsBtn || !_canvasHost) return;
 
-        const btn = document.createElement('button');
+        // Fix 2: reuse YT's NATIVE fullscreen control look. Best path is cloning YT's
+        // own fullscreen button so markup/classes/theme match exactly; fall back to a
+        // corner-bracket SVG button styled to match when it isn't in the DOM.
+        let btn;
+        const native = document.querySelector('.ytp-fullscreen-button') ||
+            document.querySelector('button[aria-label*="ull screen" i]') ||
+            document.querySelector('[aria-label*="fullscreen" i]');
+        if (native) {
+            btn = native.cloneNode(true);
+            btn.removeAttribute('id');
+            console.log('MilkViz: fullscreen control cloned from native', native.className || native.tagName);
+        } else {
+            btn = document.createElement('button');
+            btn.innerHTML = FS_ICON_SVG;
+            // Match YT video chrome: transparent, white icon, bottom-right corner.
+            btn.style.cssText =
+                'width:48px;height:36px;padding:6px;border:none;background:transparent;' +
+                'color:#fff;cursor:pointer;opacity:0.9;';
+            btn.addEventListener('mouseenter', function () { btn.style.opacity = '1'; });
+            btn.addEventListener('mouseleave', function () { btn.style.opacity = '0.9'; });
+            console.log('MilkViz: fullscreen control — replicated corner-bracket SVG (native not found)');
+        }
         btn.id = 'milkviz-fs-btn';
-        btn.textContent = '[ ]';
         btn.title = 'Enter fullscreen';
-        // ponytail: inline styles — no external CSS, consistent with overlay btn above
-        btn.style.cssText =
-            'position:absolute;top:8px;right:8px;z-index:9999;' +
-            'padding:4px 8px;border:none;border-radius:6px;' +
-            'background:rgba(255,255,255,0.15);color:#fff;' +
-            'font-family:monospace;font-size:13px;cursor:pointer;' +
-            'backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);';
+        // Position bottom-right of the stage, where YT puts the video fullscreen control.
+        btn.style.position = 'absolute';
+        btn.style.right = '8px';
+        btn.style.bottom = '8px';
+        btn.style.top = 'auto';
+        btn.style.left = 'auto';
+        btn.style.zIndex = '9999';
 
         btn.addEventListener('click', function () {
             if (!document.fullscreenElement) {
@@ -641,7 +742,6 @@ window.__vizScriptLoaded = true;
             applySize();
             if (_fsBtn) {
                 const inFs = !!document.fullscreenElement;
-                _fsBtn.textContent = inFs ? '[x]' : '[ ]';
                 _fsBtn.title = inFs ? 'Exit fullscreen' : 'Enter fullscreen';
             }
         };
