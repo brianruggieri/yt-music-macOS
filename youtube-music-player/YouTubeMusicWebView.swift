@@ -249,6 +249,23 @@ struct YouTubeMusicWebView: NSViewRepresentable {
         let lightScript = WKUserScript(source: LightThemeEngine.script, injectionTime: .atDocumentStart, forMainFrameOnly: true)
         config.userContentController.addUserScript(lightScript)
 
+        // Visualizer capability flag (document start, mirrors the __ytmNativeDark seed):
+        // tells the page whether native audio capture (macOS 14.4+ process tap) is
+        // available before it decides to offer the visualizer.
+        let vizSeed = WKUserScript(source: "window.__ytmVizSupported = \(AudioTap.isSupported ? "true" : "false");",
+                                   injectionTime: .atDocumentStart, forMainFrameOnly: true)
+        config.userContentController.addUserScript(vizSeed)
+
+        // JS->native visualizer control: { action: "modeOn" | "modeOff" }.
+        config.userContentController.add(context.coordinator, name: "visualizer")
+
+        // TEMPORARY — Task 4 Step 5 smoke probe; removed in Task 12. Lets a human
+        // confirm ~60 Hz feed payloads in the Web Inspector console before Task 6
+        // wires the real __milkFeed consumer.
+        let vizProbe = WKUserScript(source: "window.__milkFeed = b => console.log('feed', b.length);",
+                                    injectionTime: .atDocumentEnd, forMainFrameOnly: true)
+        config.userContentController.addUserScript(vizProbe)
+
         // ===== TEMPORARY Spike B (remove in Task 12) =====
         // Injects Butterchurn + feed harness to verify AudioWorklet->Butterchurn wiring.
         // Files are read from the app bundle at runtime so they are not inlined here.
@@ -277,6 +294,7 @@ struct YouTubeMusicWebView: NSViewRepresentable {
         webView.setValue(false, forKey: "drawsBackground")
 
         viewModel.webView = webView
+        context.coordinator.webView = webView
 
         if let url = URL(string: "https://music.youtube.com") {
             webView.load(URLRequest(url: url))
@@ -287,15 +305,85 @@ struct YouTubeMusicWebView: NSViewRepresentable {
 
     func updateNSView(_ nsView: WKWebView, context: Context) {}
 
+    // Tear the feed down with the view: cancel the timer, stop the tap, and drop the
+    // visualizer message handler so a discarded WebView can't leave a 60 Hz tap running.
+    static func dismantleNSView(_ nsView: WKWebView, coordinator: Coordinator) {
+        coordinator.stopVisualizerFeed()
+        nsView.configuration.userContentController.removeScriptMessageHandler(forName: "visualizer")
+    }
+
     func makeCoordinator() -> Coordinator {
         Coordinator(viewModel: viewModel)
     }
 
     class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
         var viewModel: YouTubeMusicViewModel
+        weak var webView: WKWebView?
+
+        // Visualizer feed state. Both owned on the MainActor; the feed timer fires
+        // on the main queue and bridges to them via MainActor.assumeIsolated.
+        private var audioTap: AudioTap?
+        private var feedTimer: DispatchSourceTimer?
 
         init(viewModel: YouTubeMusicViewModel) {
             self.viewModel = viewModel
+            super.init()
+
+            // TEMPORARY — Task 4 Step 5 smoke trigger; removed in Task 12. Lets a
+            // human start the feed from the menu before Task 6 sends modeOn over JS.
+            // ponytail: observer token isn't retained — the Coordinator lives for the
+            // app session and this hook is removed in Task 12, so there's nothing to
+            // detach. The handler runs on the main queue, so assumeIsolated is sound.
+            NotificationCenter.default.addObserver(forName: .ytmVizSmokeTest, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    guard let self, let wv = self.webView else { return }
+                    self.startVisualizerFeed(wv)
+                }
+            }
+        }
+
+        // MARK: - Visualizer feed
+
+        /// Start (or no-op if already running) a ~60 Hz loop pushing base64 stereo
+        /// Float32 PCM into the page via window.__milkFeed. Idempotent: a second
+        /// modeOn while running returns early so we never stack a second tap/timer.
+        @MainActor func startVisualizerFeed(_ webView: WKWebView) {
+            if audioTap != nil { return }                 // idempotent: already running
+            let tap = AudioTap()
+            do {
+                try tap.start()
+            } catch {
+                webView.evaluateJavaScript("window.MilkViz && window.MilkViz.nativeStatus({state:'error',code:'audioCaptureDenied'})")
+                return
+            }
+            audioTap = tap
+            webView.evaluateJavaScript("window.MilkViz && window.MilkViz.nativeStatus({state:'ok'})")
+
+            let t = DispatchSource.makeTimerSource(queue: .main)
+            t.schedule(deadline: .now(), repeating: .milliseconds(16))   // ~60 Hz
+            t.setEventHandler { [weak self, weak webView] in
+                // The timer fires on the main queue, so we are really on the MainActor.
+                // assumeIsolated bridges this nonisolated @Sendable handler to the
+                // MainActor-isolated audioTap and the MainActor evaluateJavaScript call
+                // without a per-tick Task allocation (sound: queue is .main).
+                MainActor.assumeIsolated {
+                    guard let self, let webView, let tap = self.audioTap else { return }
+                    let pcm = tap.latestWindow(frames: 2048)              // interleaved stereo
+                    guard !pcm.isEmpty else { return }
+                    let b64 = pcm.withUnsafeBufferPointer { ptr in
+                        Data(bytes: ptr.baseAddress!, count: ptr.count * MemoryLayout<Float>.stride)
+                            .base64EncodedString()
+                    }
+                    webView.evaluateJavaScript("window.__milkFeed && window.__milkFeed('\(b64)')")
+                }
+            }
+            t.resume()
+            feedTimer = t
+        }
+
+        @MainActor func stopVisualizerFeed() {
+            feedTimer?.cancel(); feedTimer = nil
+            audioTap?.stop(); audioTap = nil
         }
 
         func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
@@ -320,6 +408,18 @@ struct YouTubeMusicWebView: NSViewRepresentable {
                 let color = NSColor(srgbRed: CGFloat(cr) / 255.0, green: CGFloat(cg) / 255.0, blue: CGFloat(cb) / 255.0, alpha: 1.0)
                 Task { @MainActor in
                     self.viewModel.headerColor = color
+                }
+            } else if message.name == "visualizer",
+                      let body = message.body as? [String: Any],
+                      let action = body["action"] as? String {
+                // Hop to the MainActor (this handler is nonisolated) before touching
+                // the MainActor-isolated feed lifecycle.
+                Task { @MainActor in
+                    switch action {
+                    case "modeOn":  if let wv = self.webView { self.startVisualizerFeed(wv) }
+                    case "modeOff": self.stopVisualizerFeed()
+                    default:        break
+                    }
                 }
             }
         }
@@ -411,4 +511,9 @@ struct YouTubeMusicWebView: NSViewRepresentable {
             decisionHandler(.cancel)
         }
     }
+}
+
+extension Notification.Name {
+    // TEMPORARY — Task 4 Step 5 smoke trigger; removed in Task 12.
+    static let ytmVizSmokeTest = Notification.Name("ytmVizSmokeTest")
 }

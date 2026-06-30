@@ -43,6 +43,12 @@ struct youtube_music_playerApp: App {
                 Button("Run AudioTap RMS Check") {
                     AudioTap.rmsCheck()
                 }
+                // TEMPORARY — Task 4 Step 5; removed in Task 12. Starts the ~60 Hz
+                // visualizer feed so a human can confirm base64 payloads in the Web
+                // Inspector console before Task 6 sends modeOn over JS.
+                Button("Start Visualizer Feed (smoke)") {
+                    NotificationCenter.default.post(name: .ytmVizSmokeTest, object: nil)
+                }
             }
         }
     }
