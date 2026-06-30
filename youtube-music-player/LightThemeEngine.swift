@@ -391,8 +391,11 @@ enum LightThemeEngine {
             // Text inputs/selects: suppress BOTH our ring (dropped above) AND the browser's
             // default UA focus outline, so focus shows only via the native Material underline
             // (dialog title/description/privacy) or the search pill's :focus-within ring above.
-            // Those are the visible indicators, so this still satisfies WCAG 2.4.7.
-            ['input:focus, input:focus-visible', 'outline: none'],
+            // Those are the visible indicators, so this still satisfies WCAG 2.4.7. EXCLUDE the
+            // input types whose ONLY focus cue is the outline (checkbox/radio/range/file) — they
+            // have no underline to fall back on, so they keep their native ring.
+            ['input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]):focus, input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]):focus-visible',
+                'outline: none'],
         ];
 
         // Grayscale + light? Used to gate literal text-color inversion: only flip
@@ -753,10 +756,13 @@ enum LightThemeEngine {
                 // Real media only: a background-image counts as "media" ONLY if it's an actual
                 // url() image — NOT a gradient. imgs always count.
                 .filter(m => m.tagName === 'IMG' || m.tagName === 'YT-IMG-SHADOW' || /url\(/i.test(getComputedStyle(m).backgroundImage))
-                // …and exclude the full-bleed immersive BACKDROP (a ~full-width blurred cover
-                // image, e.g. 1388px wide): a glyph over it isn't "on artwork", it's on the page,
-                // so it must stay dark. Foreground art the glyph actually sits on (thumbnails,
-                // covers) is ≤ ~540px; the backdrop is full-width. Cap width to tell them apart.
+                // …and exclude the immersive full-bleed BACKDROP (a blurred cover image behind
+                // the whole page): a glyph over it isn't "on artwork", it's on the page, so it
+                // must stay dark. Match it by its OWNING container — robust on a narrow window,
+                // where a width cap alone would let a < cap-width backdrop slip through. The
+                // width cap stays as a backstop for any other full-bleed surface; foreground art
+                // (thumbnails/covers) is ≤ ~540px and not inside these immersive containers.
+                .filter(m => !m.closest('ytmusic-fullbleed-thumbnail, ytmusic-immersive-header-renderer, .background-gradient'))
                 .map(m => m.getBoundingClientRect()).filter(b => b.width > 24 && b.height > 24 && b.width < 700);
             const overMedia = (r) => { const cx = r.left + r.width / 2, cy = r.top + r.height / 2; return mediaRects.some(b => cx >= b.left && cx <= b.right && cy >= b.top && cy <= b.bottom); };
             for (const ic of document.querySelectorAll('button svg, a svg, [role="button"] svg, tp-yt-paper-icon-button svg, yt-icon svg')) {
