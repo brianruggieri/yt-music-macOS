@@ -921,8 +921,7 @@
     let _fsChangeHandler = null;
 
     // Standard "enter fullscreen" glyph — four L-shaped corner brackets. Stroke follows the
-    // button's `color` (set per-theme by applyFsChrome) so the icon stays legible on the
-    // theme-matched hover scrim.
+    // button's `color` (white, set inline) so the icon matches YT's white media controls.
     const FS_ICON_SVG =
         '<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" ' +
         'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
@@ -936,15 +935,14 @@
         return m ? 'rgba(' + m[1] + ',' + m[2] + ',' + m[3] + ',0)' : 'transparent';
     }
 
-    // Theme-match the windowed top hover overlay to YT's video/album-art scrim: fade from the page
-    // background color (off-white in light, near-black in dark) to transparent, with a legible icon.
+    // Theme-match the windowed top hover overlay's gradient to YT's video/album-art scrim: fade
+    // from the page background color (off-white in light, near-black in dark) to transparent. The
+    // icon stays white in both themes (see the button's inline style) to match YT's media controls.
     // Called on create and on every runtime theme swap (reTheme).
     function applyFsChrome() {
+        if (!_fsGradient) return;
         var bg = pageBgColor();
-        if (_fsGradient) {
-            _fsGradient.style.background = 'linear-gradient(to bottom, ' + bg + ', ' + _fadeOut(bg) + ')';
-        }
-        if (_fsBtn) _fsBtn.style.color = currentDark() ? '#fff' : '#0f0f0f';
+        _fsGradient.style.background = 'linear-gradient(to bottom, ' + bg + ', ' + _fadeOut(bg) + ')';
     }
 
     // SVG glyphs for the fullscreen control bar. Stroke style matches FS_ICON_SVG.
@@ -1474,7 +1472,10 @@
             'position:absolute;top:14px;right:18px;width:28px;height:28px;' +
             'display:flex;align-items:center;justify-content:center;' +
             'opacity:0;transition:opacity .2s ease;cursor:pointer;pointer-events:auto;' +
-            'z-index:3;border:none;background:transparent;padding:0;';
+            'z-index:3;border:none;background:transparent;padding:0;' +
+            // White icon to match YT's video/album-art controls; drop-shadow keeps it legible on
+            // the light (page-bg) scrim. currentColor drives the SVG stroke.
+            'color:#fff;filter:drop-shadow(0 1px 2px rgba(0,0,0,0.55));';
 
         // Sibling of the canvas, so the capture-phase preset-skip handler's
         // canvas.contains() check passes it through; stopPropagation is belt-and-braces.
@@ -1508,6 +1509,9 @@
                 _fsBtn.title = inFs ? 'Exit fullscreen' : 'Enter fullscreen';
                 _fsBtn.setAttribute('aria-label', _fsBtn.title);
             }
+            // No top hover scrim in fullscreen — the bottom bar owns chrome there (the scrim was
+            // bleeding a light band across the top of the fullscreen visualizer).
+            if (_fsGradient) _fsGradient.style.display = inFs ? 'none' : '';
         };
         document.addEventListener('fullscreenchange', _fsChangeHandler);
         document.addEventListener('webkitfullscreenchange', _fsChangeHandler);
