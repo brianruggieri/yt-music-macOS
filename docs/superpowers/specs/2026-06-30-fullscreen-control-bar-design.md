@@ -26,12 +26,15 @@ proxies canvas clicks), the bar **drives YT's real controls; it does not replace
 Transport is client-side JS on `<video>` + `mediaSession` + best-effort proxy clicks of YT's
 player-bar buttons.
 
-**Native dependency (not "zero Swift"):** enter-fullscreen already bounces through the existing
-native bridge (`postVizAction('enterFullscreen')` → native re-issues `requestFullscreen` without
-transient activation, because a gesture-initiated `requestFullscreen()` is rejected in WKWebView).
-This feature **reuses that existing bridge unchanged**; exit is client-side (`exitFullscreen`). We
-expect **no new Swift**, but that is contingent on the existing bridge already covering the flow —
-confirm during QA rather than asserting it.
+**Native dependency:** enter-fullscreen already bounces through the existing native bridge
+(`postVizAction('enterFullscreen')` → native re-issues `requestFullscreen` without transient
+activation, because a gesture-initiated `requestFullscreen()` is rejected in WKWebView). This
+feature **reuses that bridge unchanged**; exit is client-side (`exitFullscreen`). **No Swift feature
+logic changes.** The one mechanical touch: the pure-logic module (§4.1) ships as a new bundled JS
+file. The `Resources/visualizer/` folder is an Xcode 16 `PBXFileSystemSynchronizedRootGroup`, so a
+new `.js` there is auto-bundled — **no `project.pbxproj` edit** — plus one line added to the
+`vizScripts` array in `YouTubeMusicWebView.swift` (injected before `visualizer.js`). Confirm the
+enter-fullscreen flow still works in QA.
 
 ## 3. Decisions (locked via brainstorming)
 
