@@ -244,6 +244,21 @@
         return { left, top, width: Math.max(0, right - left), height: Math.max(0, bottom - top) };
     }
 
+    // Is the now-playing page actually expanded? YT marks the open player page with
+    // `player-page-open_` on ytmusic-app-layout. We key off that, with a geometric
+    // fallback (page visibly on-screen) in case the attribute name drifts. Our canvas
+    // host is position:fixed, so without this it keeps floating over Home/Explore after
+    // the user collapses the player — it must close WITH the now-playing window.
+    function isPlayerPageOpen() {
+        const layout = document.querySelector('ytmusic-app-layout');
+        if (layout && (layout.hasAttribute('player-page-open_') ||
+                layout.hasAttribute('player-page-open'))) return true;
+        const page = document.querySelector('ytmusic-player-page');
+        if (!page) return false;
+        const r = page.getBoundingClientRect();
+        return r.height > 0 && r.top < window.innerHeight - 50;
+    }
+
     // Current theme. __ytmNativeDark is a load-time seed (NSApp appearance) that is never
     // updated, so after a runtime light/dark swap it's stale. The light engine keeps
     // documentElement[data-ytm-mode] current on every swap — prefer it, seed as fallback.
@@ -341,6 +356,12 @@
             '.av-toggle.milkviz-styled.milkviz-light>button:hover:not(.milkviz-sel){background:rgba(0,0,0,0.05) !important;}',
             '.av-toggle.milkviz-styled.milkviz-dark>button:hover:not(.milkviz-sel){background:rgba(255,255,255,0.06) !important;}',
             '.av-toggle.milkviz-styled.milkviz-light>button.milkviz-sel{background:#FFFFFF !important;color:#0A0A0A !important;}',
+            // LightThemeEngine paints whichever of Song/Video YT has selected (its
+            // `playback-mode` attr) as a white pill — but activating the Visualizer is an
+            // overlay that never changes playback-mode, so Video stays "selected" alongside
+            // our Visualizer. This (0,4,1) rule out-specifies that engine rule (0,3,1) and
+            // strips the pill+shadow from any non-selected button, so exactly one reads selected.
+            '.av-toggle.milkviz-styled.milkviz-light>button:not(.milkviz-sel){background:transparent !important;box-shadow:none !important;}',
             '.av-toggle.milkviz-styled.milkviz-dark>button.milkviz-sel{background:rgba(255,255,255,0.16) !important;color:#FFFFFF !important;}',
             '.av-toggle.milkviz-styled>button:focus-visible{outline:2px solid #1A73E8 !important;outline-offset:1px !important;}',
         ].join('');
@@ -1007,6 +1028,28 @@
         }, 200);
     }
 
+    // Watch for the now-playing page collapsing while the visualizer is active, and
+    // deactivate so the fixed canvas host doesn't float over the rest of the app. The
+    // observer is attribute-only on the two elements YT flips on open/close, so it's cheap.
+    function watchPlayerPageClose() {
+        const layout = document.querySelector('ytmusic-app-layout');
+        const page = document.querySelector('ytmusic-player-page');
+        if (!layout && !page) { setTimeout(watchPlayerPageClose, 500); return; }
+        let reCheck = null;
+        const check = function () {
+            if (!_active) return;
+            if (!isPlayerPageOpen()) { MilkViz.setActive(false); return; }
+            // YT can drop the open attribute at the START of the collapse animation while
+            // the page is still geometrically on-screen; no further mutation is guaranteed
+            // once the CSS transform finishes, so re-check after it settles to catch it.
+            clearTimeout(reCheck);
+            reCheck = setTimeout(function () { if (_active && !isPlayerPageOpen()) MilkViz.setActive(false); }, 350);
+        };
+        const obs = new MutationObserver(check);
+        if (layout) obs.observe(layout, { attributes: true });
+        if (page) obs.observe(page, { attributes: true });
+    }
+
     // Boot the segment observer. Gated on __ytmVizSupported AND being on a YT Music page.
     function startSegObserver() {
         if (!window.__ytmVizSupported) {
@@ -1034,6 +1077,11 @@
         // MutationObserver re-injects after SPA navigation removes our segment.
         const obs = new MutationObserver(scheduleInjectCheck);
         obs.observe(document.body, { childList: true, subtree: true });
+
+        // Tear the visualizer down when the now-playing page is collapsed/closed — our
+        // fixed overlay would otherwise stick over Home/Explore. Fires only on player
+        // open/close attribute changes, and only acts while the visualizer is active.
+        watchPlayerPageClose();
 
         // Re-theme the host frame + toggle when the light engine flips the page theme.
         new MutationObserver(reTheme).observe(document.documentElement,
