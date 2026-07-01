@@ -1018,6 +1018,9 @@
         _barPlayed = null, _barKnob = null, _barTime = null, _barThumb = null, _barTitle = null;
     let _barVolSliding = false;   // true while dragging the volume slider (don't fight its value)
     let _barVideo = null, _barVideoEvents = null;
+    let _barSeek = null;                         // Fix 8: stored for aria-value updates in updateBarTransport
+    let _seekCleanup = null;                     // Fix 3: tear-down fn for in-flight drag listeners
+    let _lastPaused = null, _lastMuted = null;   // Fix 9: guard icon-innerHTML churn
 
     // Task 4 fills these in; no-op stubs so Task 3 runs standalone (REASSIGNED, not redeclared).
     var resolveVideo = function () { return null; };
@@ -1044,7 +1047,18 @@
         const seek = document.createElement('div');
         seek.id = 'milkviz-seek';
         seek.setAttribute('role', 'slider'); seek.setAttribute('aria-label', 'Seek');
+        seek.setAttribute('tabindex', '0');
+        seek.setAttribute('aria-valuemin', '0');
         seek.innerHTML = '<div id="milkviz-seek-played"></div><div id="milkviz-seek-knob"></div>';
+        seek.addEventListener('keydown', function (e) {
+            if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+            e.preventDefault(); e.stopPropagation();
+            const v = _barVideo || resolveVideo();
+            if (!v) return;
+            const delta = e.key === 'ArrowRight' ? 5 : -5;
+            const t = window.MilkVizCtl.clampSeek(v.currentTime + delta, v.duration);
+            if (t !== null) { v.currentTime = t; updateBarTransport(); }
+        });
 
         const row = document.createElement('div'); row.id = 'milkviz-row';
         const prev = mkBtn('milkviz-prev', 'Previous', ICON.prev);
@@ -1105,6 +1119,9 @@
         pPrev.addEventListener('click', function (e) { e.stopPropagation(); doLoadPreset(_presetIdx - 1, 2.7); scheduleCycle(); });
         pNext.addEventListener('click', function (e) { e.stopPropagation(); doLoadPreset(_presetIdx + 1, 2.7); scheduleCycle(); });
 
+        // Fix 9: reset icon state so a rebuilt bar always repaints the correct icon.
+        _lastPaused = _lastMuted = null;
+
         // Hide prev/next if YT's buttons aren't present (never leave a dead control).
         if (!ytBtn('prev')) prev.style.display = 'none';
         if (!ytBtn('next')) next.style.display = 'none';
@@ -1127,11 +1144,15 @@
                 document.removeEventListener('pointermove', move);
                 document.removeEventListener('pointerup', up);
                 document.removeEventListener('pointercancel', up);
+                document.removeEventListener('lostpointercapture', up);
+                _seekCleanup = null;
                 if (_idle) _idle.setLock('scrub', false);
             };
+            _seekCleanup = up;   // Fix 3: expose so stopIdle can force-clean on abnormal exit
             document.addEventListener('pointermove', move);
             document.addEventListener('pointerup', up);
             document.addEventListener('pointercancel', up);
+            document.addEventListener('lostpointercapture', up);
         });
 
         row.appendChild(prev); row.appendChild(play); row.appendChild(next);
@@ -1152,12 +1173,19 @@
         _barPlayed = bar.querySelector('#milkviz-seek-played');
         _barKnob = bar.querySelector('#milkviz-seek-knob');
         _barTime = time; _barThumb = thumb; _barTitle = title;
-        _barPresetLabel = pName;
+        _barPresetLabel = pName; _barSeek = seek;
     }
 
     // Task 4: wire active-video resolution + binding.
+    // Fix 5: prefer largest visible/playing video; fall back to pure helper.
     resolveVideo = function () {
-        return window.MilkVizCtl.pickActiveVideo(document.querySelectorAll('video'));
+        const all = Array.prototype.slice.call(document.querySelectorAll('video'));
+        const valid = all.filter(function (v) { return v && isFinite(v.duration) && v.duration > 0 && v.readyState >= 1; });
+        if (valid.length <= 1) return window.MilkVizCtl.pickActiveVideo(all);
+        const playing = valid.filter(function (v) { return !v.paused && !v.ended; });
+        const pool = playing.length ? playing : valid;
+        const area = function (v) { const r = v.getBoundingClientRect(); return r.width * r.height; };
+        return pool.reduce(function (best, v) { return (best && area(best) >= area(v)) ? best : v; }, null);
     };
 
     bindVideo = function (v) {
@@ -1195,17 +1223,30 @@
             _barPlayed.style.width = pct + '%';
             _barKnob.style.left = pct + '%';
             _barTime.textContent = fmt(v.currentTime) + ' / ' + fmt(v.duration);
+            // Fix 8: keep the slider's ARIA value semantics honest.
+            if (_barSeek) {
+                _barSeek.setAttribute('aria-valuemax', String(Math.floor(v.duration)));
+                _barSeek.setAttribute('aria-valuenow', String(Math.floor(v.currentTime)));
+                _barSeek.setAttribute('aria-valuetext', fmt(v.currentTime) + ' of ' + fmt(v.duration));
+            }
         } else {
             _barPlayed.style.width = '0%'; _barKnob.style.left = '0%';
             _barTime.textContent = '0:00 / 0:00';
         }
+        // Fix 9: only rewrite innerHTML when paused/muted state actually flips (avoids ~4×/sec SVG reparse).
         const paused = !v || v.paused;
-        _barPlayBtn.innerHTML = paused ? ICON.play : ICON.pause;
+        if (paused !== _lastPaused) {
+            _lastPaused = paused;
+            _barPlayBtn.innerHTML = paused ? ICON.play : ICON.pause;
+        }
         _barPlayBtn.setAttribute('aria-label', paused ? 'Play' : 'Pause');
         _barPlayBtn.setAttribute('aria-pressed', paused ? 'false' : 'true');
         _barPlayBtn.title = paused ? 'Play' : 'Pause';
         const muted = !!(v && v.muted);
-        _barVolBtn.innerHTML = muted ? ICON.volMute : ICON.vol;
+        if (muted !== _lastMuted) {
+            _lastMuted = muted;
+            _barVolBtn.innerHTML = muted ? ICON.volMute : ICON.vol;
+        }
         _barVolBtn.setAttribute('aria-label', muted ? 'Unmute' : 'Mute');
         _barVolBtn.setAttribute('aria-pressed', muted ? 'true' : 'false');
         if (_barVolSlider && v && !_barVolSliding) _barVolSlider.value = String(v.muted ? 0 : v.volume);
@@ -1245,10 +1286,12 @@
 
     // Real implementation — REASSIGN the Task 2 var (do not redeclare; `_barPresetLabel`
     // and `var setBarPresetLabel` already exist from Task 2).
+    // Fix 6: also set aria-label so the full preset name is surfaced to a11y.
     setBarPresetLabel = function (name) {
         if (!_barPresetLabel) return;
         _barPresetLabel.textContent = name || '';
         _barPresetLabel.title = name || '';
+        _barPresetLabel.setAttribute('aria-label', name || '');
     };
 
     // Idle controller + activity listeners.
@@ -1261,6 +1304,8 @@
     }
 
     // Video-fullscreen idle helpers (Task 5).
+    let _videoChromeSavedCss = null;   // Fix 1: snapshot of YT's original inline styles
+
     function injectVideoIdleCss() {
         if (document.getElementById('milkviz-video-idle-css')) return;
         const css = document.createElement('style');
@@ -1279,21 +1324,24 @@
         return null;
     }
 
+    // Fix 2: shared reduced-motion helper (also used by applyVideoReveal).
+    function _reducedMotion() {
+        return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+    }
+
+    // Fix 1: snapshot YT's inline styles before hiding so they're restored exactly on reveal.
     function applyVideoReveal(show) {
         document.documentElement.classList.toggle('milkviz-idle', !show);   // cursor:none when hidden
         const el = videoFsChrome();
         if (!el) return;
         if (show) {
-            // Restore: clear every inline override we set (leave YT's own styles intact).
-            el.style.removeProperty('opacity');
-            el.style.removeProperty('visibility');
-            el.style.removeProperty('pointer-events');
-            el.style.removeProperty('transition');
+            if (_videoChromeSavedCss !== null) { el.style.cssText = _videoChromeSavedCss; _videoChromeSavedCss = null; }
         } else {
+            if (_videoChromeSavedCss === null) _videoChromeSavedCss = el.style.cssText;   // snapshot YT's own inline styles once
+            const reduce = _reducedMotion();
             el.style.setProperty('opacity', '0', 'important');
             el.style.setProperty('pointer-events', 'none', 'important');
-            // Delay the visibility flip until after the opacity fade (same trick as the viz bar).
-            el.style.setProperty('transition', 'opacity .35s ease, visibility 0s linear .35s', 'important');
+            el.style.setProperty('transition', reduce ? 'none' : 'opacity .35s ease, visibility 0s linear .35s', 'important');
             el.style.setProperty('visibility', 'hidden', 'important');
         }
     }
@@ -1320,25 +1368,34 @@
         };
         const onScrubEnd = function () { _idle.setLock('scrub', false); };
 
+        // Fix 4: re-resolve active video when a new track starts (covers YT swapping <video>).
+        const onMediaChange = function () {
+            if (isVizFullscreen()) { bindVideo(resolveVideo()); updateBarMeta(); }
+        };
         document.addEventListener('mousemove', onMove);
         document.addEventListener('pointerdown', onDown);
         document.addEventListener('focusin', onFocus);
         document.addEventListener('keydown', onKey);
+        document.addEventListener('play', onMediaChange, true);           // capture: play doesn't bubble
+        document.addEventListener('loadedmetadata', onMediaChange, true);
         window.addEventListener('pointerup', onScrubEnd);
         window.addEventListener('pointercancel', onScrubEnd);
         window.addEventListener('lostpointercapture', onScrubEnd);
         window.addEventListener('blur', onScrubEnd);
-        _idleListeners = { onMove, onDown, onFocus, onKey, onScrubEnd };
+        _idleListeners = { onMove, onDown, onFocus, onKey, onScrubEnd, onMediaChange };
         _idle.reveal();   // controls visible on entry, then auto-hide after the idle timeout
     }
 
     function stopIdle() {
+        if (_seekCleanup) _seekCleanup();   // Fix 3: force-clean any in-flight drag listeners
         if (_idleListeners) {
             const l = _idleListeners;
             document.removeEventListener('mousemove', l.onMove);
             document.removeEventListener('pointerdown', l.onDown);
             document.removeEventListener('focusin', l.onFocus);
             document.removeEventListener('keydown', l.onKey);
+            document.removeEventListener('play', l.onMediaChange, true);          // Fix 4
+            document.removeEventListener('loadedmetadata', l.onMediaChange, true); // Fix 4
             window.removeEventListener('pointerup', l.onScrubEnd);
             window.removeEventListener('pointercancel', l.onScrubEnd);
             window.removeEventListener('lostpointercapture', l.onScrubEnd);
@@ -1352,7 +1409,7 @@
     // Called by native (in response to the fs button's 'enterFullscreen' message) so the
     // request runs without transient activation — the only context WebKit accepts here.
     MilkViz.enterFullscreen = function () {
-        if (!_canvasHost || document.fullscreenElement) return;
+        if (!_canvasHost || document.fullscreenElement || document.webkitFullscreenElement) return;   // Fix 7a
         var req = _canvasHost.requestFullscreen || _canvasHost.webkitRequestFullscreen;
         if (req) req.call(_canvasHost);
     };
@@ -1399,8 +1456,8 @@
         // canvas.contains() check passes it through; stopPropagation is belt-and-braces.
         btn.addEventListener('click', function (e) {
             e.stopPropagation();
-            if (document.fullscreenElement) {
-                document.exitFullscreen();
+            if (document.fullscreenElement || document.webkitFullscreenElement) {   // Fix 7b
+                exitFs();
                 return;
             }
             // A real click carries transient activation, and WebKit rejects a gesture-initiated
@@ -1432,8 +1489,8 @@
     }
 
     function removeFullscreenControl() {
-        if (document.fullscreenElement) {
-            document.exitFullscreen().catch(function () {});
+        if (document.fullscreenElement || document.webkitFullscreenElement) {   // Fix 7c
+            exitFs();
         }
         if (_fsChangeHandler) {
             document.removeEventListener('fullscreenchange', _fsChangeHandler);
