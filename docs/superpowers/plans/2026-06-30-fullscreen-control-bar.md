@@ -123,6 +123,16 @@ test('justHidden swallows synthetic post-hide movement; reveal() bypasses it', (
   expect(c.isVisible()).toBe(true);
 });
 
+test('destroy() clears timers and locks', () => {
+  const { createIdleController } = loadCtl();
+  let hides = 0; const tm = fakeTimers();
+  const c = createIdleController({ onHide: () => hides++, setTimer: tm.setTimer, clearTimer: tm.clearTimer });
+  c.activity(0, 0);           // arms a hide timer
+  c.destroy();
+  expect(tm.fireByMs(2500)).toBe(false);  // hide timer was cleared
+  expect(hides).toBe(0);
+});
+
 test('formatTime / clampSeek / pickActiveVideo edge cases', () => {
   const { formatTime, clampSeek, pickActiveVideo } = loadCtl();
   expect(formatTime(25)).toBe('0:25');
@@ -136,11 +146,17 @@ test('formatTime / clampSeek / pickActiveVideo edge cases', () => {
   expect(clampSeek(50, NaN)).toBe(null);
   expect(clampSeek(50, 0)).toBe(null);
   const vids = [
-    { duration: NaN, paused: true },
-    { duration: 100, paused: true, ended: false },
-    { duration: 240, paused: false, ended: false },
+    { duration: NaN, paused: true, readyState: 0 },              // no duration -> excluded
+    { duration: 100, paused: true, ended: false, readyState: 2 },
+    { duration: 240, paused: false, ended: false, readyState: 4 }, // playing + valid -> winner
   ];
   expect(pickActiveVideo(vids)).toBe(vids[2]);
+  // No video playing -> longest READY valid one (excludes not-yet-loaded preloads).
+  const paused = [
+    { duration: 200, paused: true, ended: false, readyState: 0 }, // not ready -> excluded
+    { duration: 90, paused: true, ended: false, readyState: 3 },
+  ];
+  expect(pickActiveVideo(paused)).toBe(paused[1]);
   expect(pickActiveVideo([])).toBe(null);
 });
 ```
@@ -148,7 +164,7 @@ test('formatTime / clampSeek / pickActiveVideo edge cases', () => {
 - [ ] **Step 2: Run the test, verify it fails**
 
 Run: `cd harness && source ~/.nvm/nvm.sh && nvm use && npx playwright test tests/fs-controls-util.spec.js`
-Expected: FAIL — cannot read `MilkVizCtl` of undefined (file doesn't exist yet).
+Expected: FAIL — `readFileSync` throws `ENOENT` (the module file doesn't exist yet), so every test errors.
 
 - [ ] **Step 3: Write `fs-controls-util.js`**
 
@@ -248,11 +264,16 @@ Expected: FAIL — cannot read `MilkVizCtl` of undefined (file doesn't exist yet
         return t > duration ? duration : t;
     }
 
-    // Pick the active media element: prefer a playing one with valid finite duration; else the
-    // longest valid one; else null. Ignores detached/ad/preload elements with no usable duration.
+    // Pick the active media element: prefer a playing one; else the longest one; else null.
+    // "Valid" = finite positive duration AND readyState >= 1 (HAVE_METADATA) — this excludes
+    // detached/ad/preload elements that have no loaded media yet. (readyState may be undefined
+    // for plain test doubles; treat undefined as valid so pure tests can omit it.)
     function pickActiveVideo(videos) {
         var list = videos ? Array.prototype.slice.call(videos) : [];
-        var valid = list.filter(function (v) { return v && isFinite(v.duration) && v.duration > 0; });
+        var valid = list.filter(function (v) {
+            return v && isFinite(v.duration) && v.duration > 0 &&
+                   (v.readyState === undefined || v.readyState >= 1);
+        });
         if (!valid.length) return null;
         var playing = valid.filter(function (v) { return !v.paused && !v.ended; });
         var pool = playing.length ? playing : valid;
@@ -337,13 +358,19 @@ Add, immediately after `showToast`:
         var fe = document.fullscreenElement || document.webkitFullscreenElement;
         return !!_canvasHost && fe === _canvasHost;
     }
+
+    // Exit fullscreen with the WebKit-prefixed fallback (this feature already touches prefixed fs).
+    function exitFs() {
+        var fn = document.exitFullscreen || document.webkitExitFullscreen;
+        if (fn) fn.call(document);
+    }
 ```
 
-Add the forward-declared bar globals near the other Task 10 `let`s (`_fsBtn` block) so this task compiles before Task 3/4 fill them in:
+Add the forward-declared bar globals near the other Task 10 `let`s (`_fsBtn` block) so this task compiles before Task 3 fills them in. **Use a reassignable `var` for `setBarPresetLabel` (not a `function` declaration) so Task 3 can replace it without a duplicate-declaration or delete step:**
 
 ```js
-    let _barPresetLabel = null;         // the bar's preset-name span (Task 4)
-    function setBarPresetLabel() {}      // replaced in Task 4
+    let _barPresetLabel = null;              // the bar's preset-name span (assigned in Task 3)
+    var setBarPresetLabel = function () {};  // no-op until Task 3 reassigns it
 ```
 
 - [ ] **Step 3: Point `doLoadPreset` at the router.** In `doLoadPreset`, replace `showToast(name);` with `announcePreset(name);`.
@@ -386,10 +413,13 @@ git commit -m "Move windowed visualizer preset label to top; add preset-name rou
             'padding:28px 24px 16px;box-sizing:border-box;pointer-events:auto;',
             'background:linear-gradient(to top,rgba(0,0,0,.75) 0%,rgba(0,0,0,.55) 28%,rgba(0,0,0,0) 100%);',
             'opacity:0;transform:translateY(10px);visibility:hidden;',
-            'transition:opacity .35s ease, transform .35s ease;',
+            // Delay the visibility:hidden flip until AFTER the opacity/transform fade (0s @ .35s),
+            // so the bar actually fades out over 350ms instead of snapping. Reveal flips
+            // visibility immediately (0s @ 0s) so the fade-in is visible.
+            'transition:opacity .35s ease, transform .35s ease, visibility 0s linear .35s;',
             'font-family:"Roboto",sans-serif;}',
             '#milkviz-bar.visible{opacity:1;transform:translateY(0);visibility:visible;',
-            'transition:opacity .18s cubic-bezier(.16,1,.3,1), transform .18s cubic-bezier(.16,1,.3,1);}',
+            'transition:opacity .18s cubic-bezier(.16,1,.3,1), transform .18s cubic-bezier(.16,1,.3,1), visibility 0s;}',
             // Thin scrubbable progress line across the top of the bar.
             '#milkviz-seek{position:relative;height:3px;border-radius:2px;cursor:pointer;',
             'background:rgba(255,255,255,.3);margin-bottom:14px;}',
@@ -405,17 +435,28 @@ git commit -m "Move windowed visualizer preset label to top; add preset-name rou
             '#milkviz-bar button svg{width:24px;height:24px;stroke:#fff;fill:none;',
             'stroke-width:2;stroke-linecap:round;stroke-linejoin:round;}',
             '#milkviz-bar button:focus-visible{outline:2px solid #1A73E8;outline-offset:2px;}',
-            // White-on-dark text that survives LightThemeEngine.
+            // White-on-dark. LightThemeEngine stands down whenever any element is fullscreen
+            // (LightThemeEngine.swift ~877: `fullscreenActive` gates `light`), and this bar is
+            // fullscreen-only, so stylesheet !important suffices — no per-element inline fight
+            // needed. (If QA shows any light bleed, escalate to excluding #milkviz-bar from the
+            // engine's three restyle mechanisms — see the lightthemeengine-three-mechanisms note.)
             '#milkviz-bar,#milkviz-bar *{color:#fff !important;-webkit-text-fill-color:#fff !important;}',
             '#milkviz-time{font-size:13px;min-width:88px;white-space:nowrap;}',
             '#milkviz-meta{display:flex;align-items:center;gap:10px;min-width:0;flex:1;}',
             '#milkviz-thumb{width:40px;height:40px;border-radius:4px;object-fit:cover;flex:none;}',
             '#milkviz-title{font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}',
+            // Volume: slider collapsed to 0 width, expands on hover/focus (YT-style).
+            '#milkviz-vol-wrap{display:flex;align-items:center;gap:6px;flex:none;}',
+            '#milkviz-vol-slider{width:0;opacity:0;height:4px;accent-color:#fff;cursor:pointer;',
+            'transition:width .18s ease, opacity .18s ease;}',
+            '#milkviz-vol-wrap:hover #milkviz-vol-slider,#milkviz-vol-slider:focus-visible{width:72px;opacity:1;}',
             '#milkviz-preset{display:flex;align-items:center;gap:6px;flex:none;}',
             '#milkviz-preset-name{font-size:12px;max-width:160px;overflow:hidden;text-overflow:ellipsis;',
             'white-space:nowrap;opacity:.85;}',
-            '@media (prefers-reduced-motion: reduce){#milkviz-bar{transition-duration:.01ms;transform:none;}',
-            '#milkviz-bar.visible{transition-duration:.01ms;transform:none;}}',
+            // Reduced motion: kill duration AND the visibility delay (else the bar strands
+            // visible for 350ms), drop the slide. Hide behavior itself is preserved.
+            '@media (prefers-reduced-motion: reduce){#milkviz-bar{transition-duration:.01ms;transition-delay:0s;transform:none;}',
+            '#milkviz-bar.visible{transition-duration:.01ms;transition-delay:0s;transform:none;}}',
         ].join('');
         document.head.appendChild(css);
     }
@@ -440,8 +481,15 @@ git commit -m "Move windowed visualizer preset label to top; add preset-name rou
 - [ ] **Step 3: Build the bar DOM.** Add `buildBar()` — creates `#milkviz-bar` as a **sibling of the canvas** inside `_canvasHost`. Buttons carry `aria-label`s; wiring is added in Task 4 (here they are inert). Also sets `_barPresetLabel` and the real `setBarPresetLabel`.
 
 ```js
-    let _bar = null, _barPlayBtn = null, _barVolBtn = null,
+    let _bar = null, _barPlayBtn = null, _barVolBtn = null, _barVolSlider = null,
         _barPlayed = null, _barKnob = null, _barTime = null, _barThumb = null, _barTitle = null;
+    let _barVolSliding = false;   // true while dragging the volume slider (don't fight its value)
+
+    // Task 4 fills these in; no-op stubs so Task 3 runs standalone (REASSIGNED, not redeclared).
+    var resolveVideo = function () { return null; };
+    var bindVideo = function () {};
+    var unbindVideo = function () {};
+    var updateBarMeta = function () {};
 
     function mkBtn(id, label, svg) {
         const b = document.createElement('button');
@@ -475,7 +523,14 @@ git commit -m "Move windowed visualizer preset label to top; add preset-name rou
         const title = document.createElement('div'); title.id = 'milkviz-title';
         meta.appendChild(thumb); meta.appendChild(title);
 
+        // Volume: icon (mute toggle) + slider that expands on hover, matching YT's video bar.
+        const volWrap = document.createElement('div'); volWrap.id = 'milkviz-vol-wrap';
         const vol = mkBtn('milkviz-vol', 'Mute', ICON.vol);
+        const volSlider = document.createElement('input');
+        volSlider.id = 'milkviz-vol-slider'; volSlider.type = 'range';
+        volSlider.min = '0'; volSlider.max = '1'; volSlider.step = '0.01'; volSlider.value = '1';
+        volSlider.setAttribute('aria-label', 'Volume');
+        volWrap.appendChild(vol); volWrap.appendChild(volSlider);
 
         const preset = document.createElement('div'); preset.id = 'milkviz-preset';
         const pPrev = mkBtn('milkviz-preset-prev', 'Previous preset', ICON.presetPrev);
@@ -487,27 +542,28 @@ git commit -m "Move windowed visualizer preset label to top; add preset-name rou
         const exit = mkBtn('milkviz-exit', 'Exit fullscreen', ICON.exitFs);
 
         row.appendChild(prev); row.appendChild(play); row.appendChild(next);
-        row.appendChild(time); row.appendChild(meta); row.appendChild(vol);
+        row.appendChild(time); row.appendChild(meta); row.appendChild(volWrap);
         row.appendChild(preset); row.appendChild(exit);
         bar.appendChild(seek); bar.appendChild(row);
         _canvasHost.appendChild(bar);   // sibling of the canvas; NOT inside it
 
-        _bar = bar; _barPlayBtn = play; _barVolBtn = vol;
+        _bar = bar; _barPlayBtn = play; _barVolBtn = vol; _barVolSlider = volSlider;
         _barPlayed = bar.querySelector('#milkviz-seek-played');
         _barKnob = bar.querySelector('#milkviz-seek-knob');
         _barTime = time; _barThumb = thumb; _barTitle = title;
         _barPresetLabel = pName;
     }
 
-    // Real implementation of the Task 2 forward declaration.
-    function setBarPresetLabel(name) {
+    // Real implementation — REASSIGN the Task 2 var (do not redeclare; `_barPresetLabel`
+    // and `var setBarPresetLabel` already exist from Task 2).
+    setBarPresetLabel = function (name) {
         if (!_barPresetLabel) return;
         _barPresetLabel.textContent = name || '';
         _barPresetLabel.title = name || '';
-    }
+    };
 ```
 
-Delete the Task-2 stub `function setBarPresetLabel() {}` and the `let _barPresetLabel = null;` placeholder line, now that the real ones exist (keep exactly one definition of each).
+Do NOT delete or redeclare the Task-2 `let _barPresetLabel = null;` / `var setBarPresetLabel` lines — Task 3 only assigns `_barPresetLabel = pName` (inside `buildBar`) and reassigns `setBarPresetLabel`. Keeping the single Task-2 declarations avoids the strict-mode `ReferenceError`.
 
 - [ ] **Step 4: Wire the idle controller + activity listeners.** Add the visualizer adapter and the shared listeners. `startIdle()` builds the controller and binds document listeners; `stopIdle()` tears everything down.
 
@@ -535,6 +591,7 @@ Delete the Task-2 stub `function setBarPresetLabel() {}` and the `let _barPreset
             if (inPeekZone(e)) _idle.reveal(); else _idle.activity(e.clientX, e.clientY);
         };
         const onDown = function () { _idle.reveal(); };
+        const onFocus = function () { _idle.reveal(); };
         const onKey = function (e) {
             if (['ArrowLeft','ArrowRight',' ','k','m','f','Escape'].indexOf(e.key) !== -1) _idle.reveal();
         };
@@ -542,12 +599,13 @@ Delete the Task-2 stub `function setBarPresetLabel() {}` and the `let _barPreset
 
         document.addEventListener('mousemove', onMove);
         document.addEventListener('pointerdown', onDown);
+        document.addEventListener('focusin', onFocus);
         document.addEventListener('keydown', onKey);
         window.addEventListener('pointerup', onScrubEnd);
         window.addEventListener('pointercancel', onScrubEnd);
         window.addEventListener('lostpointercapture', onScrubEnd);
         window.addEventListener('blur', onScrubEnd);
-        _idleListeners = { onMove, onDown, onKey, onScrubEnd };
+        _idleListeners = { onMove, onDown, onFocus, onKey, onScrubEnd };
         _idle.reveal();   // controls visible on entry, then auto-hide after the idle timeout
     }
 
@@ -556,6 +614,7 @@ Delete the Task-2 stub `function setBarPresetLabel() {}` and the `let _barPreset
             const l = _idleListeners;
             document.removeEventListener('mousemove', l.onMove);
             document.removeEventListener('pointerdown', l.onDown);
+            document.removeEventListener('focusin', l.onFocus);
             document.removeEventListener('keydown', l.onKey);
             window.removeEventListener('pointerup', l.onScrubEnd);
             window.removeEventListener('pointercancel', l.onScrubEnd);
@@ -579,7 +638,7 @@ Delete the Task-2 stub `function setBarPresetLabel() {}` and the `let _barPreset
         });
 ```
 
-- [ ] **Step 6: Hook the fullscreen change.** In `_fsChangeHandler` (defined in `addFullscreenControl`), after the existing padding/background/`applySize()` logic, add the adapter start/stop for the visualizer surface. Replace the body of `_fsChangeHandler` so it reads:
+- [ ] **Step 6a: Keep `_fsChangeHandler` rendering-only.** `_fsChangeHandler` (defined in `addFullscreenControl`, bound on `_canvasHost`'s fullscreen events, only while the visualizer is active) must NOT touch the idle controller or the bar — a single global handler (Step 6b) owns those, so ownership isn't split. Replace its body so it only does canvas rendering + the top-right FS button visibility:
 
 ```js
         _fsChangeHandler = function () {
@@ -595,27 +654,68 @@ Delete the Task-2 stub `function setBarPresetLabel() {}` and the `let _barPreset
                 _fsBtn.title = inFs ? 'Exit fullscreen' : 'Enter fullscreen';
                 _fsBtn.setAttribute('aria-label', _fsBtn.title);
             }
-            if (inFs) {
-                buildBar();
-                startIdle(function () { applyVisualizerReveal(true); }, function () { applyVisualizerReveal(false); });
-            } else {
-                stopIdle();
-                if (_bar) { _bar.remove(); _bar = null; _barPresetLabel = null; }
-            }
         };
 ```
+
+- [ ] **Step 6b: Add the single global fullscreen handler** (sole owner of adapter selection + bar + idle). Bound ONCE at boot regardless of whether the visualizer is active, so it also covers native YT video fullscreen (Task 5 fills the `video` branch). Place near `startSegObserver`:
+
+```js
+    let _activeAdapter = null;   // 'viz' | 'video' | null — exactly one idle owner at a time
+    let _globalFsBound = false;
+
+    function onGlobalFsChange() {
+        const fe = document.fullscreenElement || document.webkitFullscreenElement;
+        const want = !fe ? null : (isVizFullscreen() ? 'viz' : 'video');
+        if (want === _activeAdapter) return;   // idempotent: ignore no-op re-fires
+
+        // Tear down whatever adapter was active.
+        if (_activeAdapter === 'viz') {
+            stopIdle();
+            unbindVideo();                                   // no-op until Task 4 defines it
+            if (_bar) { _bar.remove(); _bar = null; _barPresetLabel = null; }
+        } else if (_activeAdapter === 'video') {
+            stopIdle();
+            document.documentElement.classList.remove('milkviz-idle');
+        }
+        _activeAdapter = want;
+
+        // Start the newly-selected adapter.
+        if (want === 'viz') {
+            buildBar();
+            startIdle(function () { applyVisualizerReveal(true); },
+                      function () { applyVisualizerReveal(false); });
+            bindVideo(resolveVideo());                       // no-ops until Task 4 defines them
+            updateBarMeta();
+            if (_presetNames.length) setBarPresetLabel(_presetNames[_presetIdx]);
+        }
+        // want === 'video' branch is added in Task 5.
+    }
+
+    function bindGlobalFs() {
+        if (_globalFsBound) return;
+        _globalFsBound = true;
+        document.addEventListener('fullscreenchange', onGlobalFsChange);
+        document.addEventListener('webkitfullscreenchange', onGlobalFsChange);
+    }
+```
+
+**Forward-reference note:** `unbindVideo`, `bindVideo`, `resolveVideo`, `updateBarMeta` are the no-op `var` stubs declared in the Task 3 Step 3 globals block; Task 4 REASSIGNS them (`resolveVideo = function(){...}`, not a `function` declaration) so there's no duplicate declaration. This lets Task 3 build and run standalone (bar with no live playback wiring).
+
+- [ ] **Step 6c: Bind the global handler at boot.** In `startSegObserver()`, after the `music.youtube.com` host check, add `bindGlobalFs();`.
 
 - [ ] **Step 7: Wire exit-fullscreen button.** In `buildBar`, after creating `exit`:
 
 ```js
-        exit.addEventListener('click', function (e) { e.stopPropagation(); document.exitFullscreen(); });
+        exit.addEventListener('click', function (e) { e.stopPropagation(); exitFs(); });
 ```
 
-- [ ] **Step 8: Teardown on visualizer off.** In `removeFullscreenControl`, add before the `_fsBtn` removal:
+- [ ] **Step 8: Teardown on visualizer off.** `removeFullscreenControl` runs when the visualizer is deactivated (possibly while still fullscreen). Add before the `_fsBtn` removal (Task 4 Step 6 adds `unbindVideo();` here too):
 
 ```js
         stopIdle();
         if (_bar) { _bar.remove(); _bar = null; _barPresetLabel = null; }
+        document.documentElement.classList.remove('milkviz-idle');   // belt-and-braces (video adapter)
+        _activeAdapter = null;   // reset the global handler's state so a later fs re-fires cleanly
 ```
 
 - [ ] **Step 9: Build**
@@ -643,16 +743,16 @@ git commit -m "Add fullscreen visualizer control bar with idle auto-hide (visual
 - Consumes: `MilkVizCtl.pickActiveVideo/formatTime/clampSeek` (Task 1); bar elements from Task 3; existing `doLoadPreset`, `_checkTrack` track poll.
 - Produces: `resolveVideo()`, `bindVideo(v)`, `unbindVideo()`, `updateBarTransport()`, `updateBarMeta()` — bar reflects real playback and drives YT's controls.
 
-- [ ] **Step 1: Active-video resolution + binding.** Add:
+- [ ] **Step 1: Active-video resolution + binding.** **REASSIGN** the Task 3 Step 6b stubs (`resolveVideo`, `bindVideo`, `unbindVideo` already exist as `var` no-op stubs — assign, do not redeclare). Add:
 
 ```js
     let _barVideo = null, _barVideoEvents = null;
 
-    function resolveVideo() {
+    resolveVideo = function () {
         return window.MilkVizCtl.pickActiveVideo(document.querySelectorAll('video'));
-    }
+    };
 
-    function bindVideo(v) {
+    bindVideo = function (v) {
         if (v === _barVideo) return;
         unbindVideo();
         _barVideo = v;
@@ -665,9 +765,9 @@ git commit -m "Add fullscreen visualizer control bar with idle auto-hide (visual
         v.addEventListener('volumechange', onState);
         _barVideoEvents = { onTime, onState };
         updateBarTransport();
-    }
+    };
 
-    function unbindVideo() {
+    unbindVideo = function () {
         if (_barVideo && _barVideoEvents) {
             _barVideo.removeEventListener('timeupdate', _barVideoEvents.onTime);
             _barVideo.removeEventListener('play', _barVideoEvents.onState);
@@ -675,12 +775,13 @@ git commit -m "Add fullscreen visualizer control bar with idle auto-hide (visual
             _barVideo.removeEventListener('volumechange', _barVideoEvents.onState);
         }
         _barVideo = null; _barVideoEvents = null;
-    }
+    };
 ```
 
 - [ ] **Step 2: Transport + meta updaters.** Add:
 
 ```js
+    // New in Task 4 (not stubbed) — plain declaration is fine.
     function updateBarTransport() {
         if (!_bar) return;
         const v = _barVideo;
@@ -697,12 +798,17 @@ git commit -m "Add fullscreen visualizer control bar with idle auto-hide (visual
         const paused = !v || v.paused;
         _barPlayBtn.innerHTML = paused ? ICON.play : ICON.pause;
         _barPlayBtn.setAttribute('aria-label', paused ? 'Play' : 'Pause');
+        _barPlayBtn.setAttribute('aria-pressed', paused ? 'false' : 'true');
         _barPlayBtn.title = paused ? 'Play' : 'Pause';
-        _barVolBtn.innerHTML = (v && v.muted) ? ICON.volMute : ICON.vol;
-        _barVolBtn.setAttribute('aria-label', (v && v.muted) ? 'Unmute' : 'Mute');
+        const muted = !!(v && v.muted);
+        _barVolBtn.innerHTML = muted ? ICON.volMute : ICON.vol;
+        _barVolBtn.setAttribute('aria-label', muted ? 'Unmute' : 'Mute');
+        _barVolBtn.setAttribute('aria-pressed', muted ? 'true' : 'false');
+        if (_barVolSlider && v && !_barVolSliding) _barVolSlider.value = String(v.muted ? 0 : v.volume);
     }
 
-    function updateBarMeta() {
+    // REASSIGN the Task 3 Step 6b stub (do not redeclare).
+    updateBarMeta = function () {
         if (!_bar) return;
         const meta = navigator.mediaSession && navigator.mediaSession.metadata;
         const title = meta && meta.title ? meta.title : '';
@@ -711,7 +817,7 @@ git commit -m "Add fullscreen visualizer control bar with idle auto-hide (visual
         const art = meta && meta.artwork && meta.artwork.length ? meta.artwork[meta.artwork.length - 1].src : '';
         if (art) { _barThumb.src = art; _barThumb.style.display = ''; }
         else { _barThumb.removeAttribute('src'); _barThumb.style.display = 'none'; }
-    }
+    };
 ```
 
 - [ ] **Step 3: Proxy YT transport buttons.** Add a helper that finds+clicks YT's real player-bar buttons, and hides prev/next if absent:
@@ -755,6 +861,18 @@ git commit -m "Add fullscreen visualizer control bar with idle auto-hide (visual
             const v = _barVideo || resolveVideo();
             if (v) { v.muted = !v.muted; }
         });
+        volSlider.addEventListener('pointerdown', function () { _barVolSliding = true; });
+        volSlider.addEventListener('input', function (e) {
+            e.stopPropagation();
+            const v = _barVideo || resolveVideo();
+            if (!v) return;
+            const val = parseFloat(volSlider.value);
+            v.volume = val; v.muted = val === 0;
+        });
+        const volDone = function () { _barVolSliding = false; };
+        volSlider.addEventListener('pointerup', volDone);
+        volSlider.addEventListener('pointercancel', volDone);
+        volSlider.addEventListener('blur', volDone);
         pPrev.addEventListener('click', function (e) { e.stopPropagation(); doLoadPreset(_presetIdx - 1, 2.7); scheduleCycle(); });
         pNext.addEventListener('click', function (e) { e.stopPropagation(); doLoadPreset(_presetIdx + 1, 2.7); scheduleCycle(); });
 
@@ -779,28 +897,22 @@ git commit -m "Add fullscreen visualizer control bar with idle auto-hide (visual
             const up = function () {
                 document.removeEventListener('pointermove', move);
                 document.removeEventListener('pointerup', up);
+                document.removeEventListener('pointercancel', up);
                 if (_idle) _idle.setLock('scrub', false);
             };
             document.addEventListener('pointermove', move);
             document.addEventListener('pointerup', up);
+            document.addEventListener('pointercancel', up);
         });
 ```
 
-- [ ] **Step 5: Refresh the bar when it opens and on track change.** In `_fsChangeHandler`'s `inFs` branch (Task 3 Step 6), after `startIdle(...)`, add:
-
-```js
-                bindVideo(resolveVideo());
-                updateBarMeta();
-                if (_presetNames.length) setBarPresetLabel(_presetNames[_presetIdx]);
-```
-
-And in `_checkTrack` (preset manager), after `doLoadPreset(...)`, add a bar refresh so title/thumb/active-video stay current:
+- [ ] **Step 5: Refresh the bar on track change.** The bar-open refresh already lives in `onGlobalFsChange` (Task 3 Step 6b) — now that `bindVideo`/`resolveVideo`/`updateBarMeta` are real, that path works. Add a track-change refresh so title/thumb/active-video stay current: in `_checkTrack` (preset manager), after `doLoadPreset(...)`, add:
 
 ```js
             if (isVizFullscreen()) { bindVideo(resolveVideo()); updateBarMeta(); }
 ```
 
-- [ ] **Step 6: Unbind on teardown.** In both `stopIdle` callers' teardown (Task 3 `_fsChangeHandler` else-branch and `removeFullscreenControl`), add `unbindVideo();` next to the `_bar` removal.
+- [ ] **Step 6: Unbind on teardown.** `onGlobalFsChange`'s viz-teardown branch already calls `unbindVideo()` (Task 3 Step 6b). Also add `unbindVideo();` to `removeFullscreenControl` (visualizer turned off entirely, which may happen while still in fullscreen), next to the `stopIdle();`/`_bar` removal added in Task 3 Step 8.
 
 - [ ] **Step 7: Build**
 
@@ -824,75 +936,74 @@ git commit -m "Wire fullscreen bar transport, seek, volume, and metadata to YT p
 - Modify: `youtube-music-player/Resources/visualizer/visualizer.js`
 
 **Interfaces:**
-- Consumes: `startIdle/stopIdle`, `isVizFullscreen` (Tasks 2-3).
-- Produces: video-adapter branch in the fullscreen handler; `injectVideoIdleCss()`; `_videoFsSelector` (confirmed in QA).
+- Consumes: `onGlobalFsChange` + `_activeAdapter` (Task 3 Step 6b), `startIdle/stopIdle`, `applyVideoReveal`.
+- Produces: `injectVideoIdleCss()`, `videoFsChrome()`, `applyVideoReveal(show)`, and the `want === 'video'` branch of `onGlobalFsChange`.
 
-**⚠ QA spike first:** the exact YT video-fullscreen chrome selector is NOT assumed. Before wiring, confirm on the live app (Safari Develop → inspect the WKWebView in a DEBUG build) which element is the fullscreen chrome and whether it's in a shadow root. Default assumption: `ytmusic-player-bar` in the light DOM. If shadow-encapsulated, use the JS-style fallback in Step 3.
+- [ ] **Step 0 — QA SPIKE (do this first; it gates the rest).** The exact YT video-fullscreen chrome element is NOT assumed. In a DEBUG build, play a music video, fullscreen it, and inspect via Safari Develop → the WKWebView. Determine: (a) which element is the visible control bar in native video fullscreen, (b) whether it's in a shadow root (a stylesheet in `<head>` can't reach shadow-DOM). Record the winning selector. If it's shadow-encapsulated, the inline-style path in Step 2 (which sets style on the resolved element directly) still works **as long as `videoFsChrome()` can resolve it** — extend `videoFsChrome()`'s selector list or add a shadow-root traversal. **Do not commit Task 5 until the bar actually hides in QA (Step 6).**
 
-- [ ] **Step 1: Inject the forced-hide CSS.** Applied to `<html>.milkviz-idle`:
+- [ ] **Step 1: Inject the cursor-hide CSS.** The bar-hide is done via inline style (Step 2, robust to YT inline `!important` and shadow DOM); the class only drives the cursor. Add:
 
 ```js
     function injectVideoIdleCss() {
         if (document.getElementById('milkviz-video-idle-css')) return;
         const css = document.createElement('style');
         css.id = 'milkviz-video-idle-css';
-        // Force-hide YT's native fullscreen bar while idle and hide the cursor. !important +
-        // specific selector to beat YT inline styles. Selector confirmed by the QA spike.
-        css.textContent = [
-            'html.milkviz-idle, html.milkviz-idle *{cursor:none !important;}',
-            'html.milkviz-idle ytmusic-player-bar{opacity:0 !important;visibility:hidden !important;',
-            'pointer-events:none !important;transition:opacity .35s ease !important;}',
-        ].join('');
+        css.textContent = 'html.milkviz-idle, html.milkviz-idle *{cursor:none !important;}';
         document.head.appendChild(css);
     }
 ```
 
-- [ ] **Step 2: Video adapter reveal/hide.** Add:
+- [ ] **Step 2: Chrome resolver + reveal/hide.** `applyVideoReveal` toggles the cursor class AND inline-hides the resolved chrome (inline `!important` beats YT's own inline styles). Add:
 
 ```js
-    function applyVideoReveal(show) {
-        document.documentElement.classList.toggle('milkviz-idle', !show);
+    // YT's native video-fullscreen chrome. Selector list confirmed/extended by the Step 0 spike.
+    function videoFsChrome() {
+        const sels = ['ytmusic-player-bar', '.ytp-chrome-bottom', '.ytmusic-player-bar'];
+        for (let i = 0; i < sels.length; i++) {
+            const el = document.querySelector(sels[i]);
+            if (el) return el;
+        }
+        return null;
     }
-```
 
-- [ ] **Step 3: Route the fullscreen handler to the right adapter.** The existing `_fsChangeHandler` lives on `_canvasHost` (only created while the visualizer is active). To cover native video fullscreen (visualizer NOT active), add a **document-level** fullscreen listener installed once at boot. Add near `startSegObserver`:
-
-```js
-    let _globalFsBound = false;
-    function onGlobalFsChange() {
-        const fe = document.fullscreenElement || document.webkitFullscreenElement;
-        const vizFs = !!_canvasHost && fe === _canvasHost;
-        if (fe && !vizFs) {
-            // Native YT video fullscreen: drive YT's own bar with our idle controller.
-            injectVideoIdleCss();
-            startIdle(function () { applyVideoReveal(true); }, function () { applyVideoReveal(false); });
-        } else if (!fe) {
-            // Left any fullscreen: if the video adapter was running, tear it down + un-hide.
-            if (!vizFs) { stopIdle(); document.documentElement.classList.remove('milkviz-idle'); }
+    function applyVideoReveal(show) {
+        document.documentElement.classList.toggle('milkviz-idle', !show);   // cursor:none when hidden
+        const el = videoFsChrome();
+        if (el) {
+            el.style.setProperty('opacity', show ? '' : '0', 'important');
+            el.style.setProperty('pointer-events', show ? '' : 'none', 'important');
+            el.style.setProperty('transition', 'opacity .35s ease', 'important');
         }
     }
-    function bindGlobalFs() {
-        if (_globalFsBound) return;
-        _globalFsBound = true;
-        document.addEventListener('fullscreenchange', onGlobalFsChange);
-        document.addEventListener('webkitfullscreenchange', onGlobalFsChange);
-    }
 ```
 
-Call `bindGlobalFs();` inside `startSegObserver()` (after the music.youtube.com host check).
+- [ ] **Step 3: Fill the `video` branch of the global handler.** `onGlobalFsChange` (Task 3 Step 6b) already selects `_activeAdapter` and tears down the previous adapter; add the video START branch. In `onGlobalFsChange`, replace the trailing comment `// want === 'video' branch is added in Task 5.` with:
 
-**Conflict guard:** the visualizer's own `_fsChangeHandler` and this global handler both fire on the same event. Ensure only one drives idle at a time: the visualizer branch runs when `vizFs` is true; the video branch only when `fe && !vizFs`. Because `startIdle` calls `stopIdle` first, a stray double-call can't leak listeners — but verify in QA that entering visualizer fullscreen does NOT add `.milkviz-idle` (Step 6).
+```js
+        else if (want === 'video') {
+            injectVideoIdleCss();
+            startIdle(function () { applyVideoReveal(true); },
+                      function () { applyVideoReveal(false); });
+        }
+```
 
-- [ ] **Step 4: Ensure cleanup on exit.** `onGlobalFsChange`'s `!fe` branch removes `.milkviz-idle`. Also add to `removeFullscreenControl` (belt-and-braces): `document.documentElement.classList.remove('milkviz-idle');`.
+No new listener is added — the single global handler owns both adapters, so they can't fight over the controller (visualizer teardown already ran before this branch, since `want !== _activeAdapter`). The video-teardown branch (Task 3 Step 6b) already calls `stopIdle()` + removes `.milkviz-idle`; also clear the inline hide there — update that branch to:
 
-- [ ] **Step 5: Build**
+```js
+        } else if (_activeAdapter === 'video') {
+            stopIdle();
+            applyVideoReveal(true);   // clears the inline hide + the cursor class
+        }
+```
+
+- [ ] **Step 4: Build**
 
 Run: `xcodebuild -project youtube-music-player.xcodeproj -scheme <scheme> -configuration Debug build 2>&1 | tail -5`
 Expected: `** BUILD SUCCEEDED **`.
 
-- [ ] **Step 6: Manual QA** — play a real music VIDEO (Song/Video toggle → Video), fullscreen it (YT's own fullscreen). After ~2.5s idle the YT bar fades and cursor hides; mouse move reveals it. Exit fullscreen → YT bar returns to normal, `.milkviz-idle` gone (check `document.documentElement.className`). Then enter the VISUALIZER fullscreen and confirm `.milkviz-idle` is NOT applied there (visualizer uses its own bar). If the YT bar didn't hide, the selector from the spike is wrong — update `injectVideoIdleCss` (or switch to toggling the element's inline `style`/`hidden` in JS if it's in a shadow root).
+- [ ] **Step 5: Manual QA** — play a real music VIDEO (Song/Video toggle → Video), fullscreen it (YT's own fullscreen). After ~2.5s idle the YT bar fades and cursor hides; mouse move reveals it. Exit fullscreen → YT bar returns to normal, `.milkviz-idle` gone and the chrome's inline opacity cleared (check `document.documentElement.className` and the resolved bar's `style`). Then enter the VISUALIZER fullscreen and confirm `.milkviz-idle` is NOT applied there (visualizer uses its own bar). If the YT bar didn't hide, `videoFsChrome()` didn't resolve the right element — extend its selector list per the Step 0 spike (or add shadow-root traversal).
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
 git add youtube-music-player/Resources/visualizer/visualizer.js
@@ -910,12 +1021,12 @@ git commit -m "Apply idle auto-hide to native YT video fullscreen (video adapter
 
 ```js
         const onKey = function (e) {
-            if (e.key === 'Escape' && isVizFullscreen()) { document.exitFullscreen(); return; }
+            if (e.key === 'Escape' && isVizFullscreen()) { exitFs(); return; }
             if (['ArrowLeft','ArrowRight',' ','k','m','f','Escape'].indexOf(e.key) !== -1) _idle.reveal();
         };
 ```
 
-- [ ] **Step 2: Reduced-motion visibility choreography.** The CSS handles the transition (Task 3 Step 1). Confirm no JS sets `visibility` on a timer that would strand the bar when transitions are ~0ms — the class toggle handles both opacity and visibility together, so nothing to change. (Documentation step: verify by testing with Reduce Motion enabled in System Settings — bar snaps in/out, never stuck.)
+- [ ] **Step 2: Verify the reduced-motion visibility choreography.** Task 3 Step 1's base rule delays `visibility:hidden` by `.35s` so the fade is visible; the reduced-motion media query (Task 3 Step 1) must therefore also zero `transition-delay` (it does) — otherwise the bar strands visible for 350ms. Confirm the media query includes `transition-delay:0s` on both `#milkviz-bar` and `#milkviz-bar.visible`. Test with Reduce Motion enabled in System Settings → Accessibility → Display: the bar snaps in/out with no slide and never sticks.
 
 - [ ] **Step 3: Leak audit.** Enter/exit visualizer fullscreen 5×, enter/exit native video fullscreen 5×, toggle the visualizer off/on 3×. After each cycle confirm (DEBUG inspector console): exactly one (or zero) `mousemove` listener churns via `stopIdle` (add a temporary `console.count` if needed, remove before commit); no `#milkviz-bar` remains after exit; `.milkviz-idle` is absent after exit; `document.querySelectorAll('#milkviz-bar').length` is 0 or 1, never more.
 
