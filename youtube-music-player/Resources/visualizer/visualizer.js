@@ -792,8 +792,10 @@
         if (!_canvasHost) return;
         const el = document.createElement('div');
         el.textContent = name;
+        // Windowed: sit at the TOP of the visualization (fullscreen routes to the bar label
+        // instead — see announcePreset). left/transform center it horizontally.
         el.style.cssText =
-            'position:absolute;bottom:24px;left:50%;transform:translateX(-50%);' +
+            'position:absolute;top:24px;left:50%;transform:translateX(-50%);' +
             'font-family:sans-serif;font-size:13px;' +
             'padding:4px 12px;border-radius:12px;pointer-events:none;z-index:9999;' +
             'opacity:1;transition:opacity 1s ease;white-space:nowrap;';
@@ -814,13 +816,20 @@
         }, 3100);
     }
 
+    // Route the preset name to the right surface. Fullscreen bar label is wired in Task 4;
+    // until then (and always when windowed) fall back to the top toast.
+    function announcePreset(name) {
+        if (_barPresetLabel && isVizFullscreen()) { setBarPresetLabel(name); return; }
+        showToast(name);
+    }
+
     // Load preset at index i (wrapping), show toast.
     function doLoadPreset(i, blend) {
         if (!_presetsObj || !_presetNames.length || !MilkViz.viz) return;
         _presetIdx = ((i % _presetNames.length) + _presetNames.length) % _presetNames.length;
         const name = _presetNames[_presetIdx];
         MilkViz.viz.loadPreset(_presetsObj[name], blend != null ? blend : 2.7);
-        showToast(name);
+        announcePreset(name);
     }
 
     // Reschedule auto-advance; random interval 18-28s for variety.
@@ -902,6 +911,9 @@
     // button in the TOP-RIGHT, both fading in only while the pointer is over the canvas
     // host. Lives on _canvasHost; gradient + button + listener torn down on setActive(false).
 
+    let _barPresetLabel = null;              // the bar's preset-name span (assigned in Task 3)
+    var setBarPresetLabel = function () {};  // no-op until Task 3 reassigns it
+
     let _fsBtn = null;
     let _fsGradient = null;
     let _fsChangeHandler = null;
@@ -934,6 +946,18 @@
         var req = _canvasHost.requestFullscreen || _canvasHost.webkitRequestFullscreen;
         if (req) req.call(_canvasHost);
     };
+
+    // True only when OUR canvas host is the fullscreen element (not YT's native video fs).
+    function isVizFullscreen() {
+        var fe = document.fullscreenElement || document.webkitFullscreenElement;
+        return !!_canvasHost && fe === _canvasHost;
+    }
+
+    // Exit fullscreen with the WebKit-prefixed fallback (this feature already touches prefixed fs).
+    function exitFs() {
+        var fn = document.exitFullscreen || document.webkitExitFullscreen;
+        if (fn) fn.call(document);
+    }
 
     function addFullscreenControl() {
         if (_fsBtn || !_canvasHost) return;
