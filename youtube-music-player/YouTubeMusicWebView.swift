@@ -330,6 +330,7 @@ struct YouTubeMusicWebView: NSViewRepresentable {
         }
 
         let vizScripts: [(String, String?)] = [
+            ("fs-controls-util",       "visualizer"),
             ("butterchurn.min",        "visualizer"),
             ("butterchurnPresets.min", "visualizer"),
             ("preset-list",            "visualizer"),
