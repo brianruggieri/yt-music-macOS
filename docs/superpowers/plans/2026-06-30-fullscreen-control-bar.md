@@ -123,7 +123,7 @@ test('justHidden swallows synthetic post-hide movement; reveal() bypasses it', (
   expect(c.isVisible()).toBe(true);
 });
 
-test('destroy() clears timers and locks', () => {
+test('destroy() clears the pending hide timer', () => {
   const { createIdleController } = loadCtl();
   let hides = 0; const tm = fakeTimers();
   const c = createIdleController({ onHide: () => hides++, setTimer: tm.setTimer, clearTimer: tm.clearTimer });
@@ -288,7 +288,7 @@ Expected: FAIL — `readFileSync` throws `ENOENT` (the module file doesn't exist
 - [ ] **Step 4: Run the test, verify it passes**
 
 Run: `cd harness && source ~/.nvm/nvm.sh && nvm use && npx playwright test tests/fs-controls-util.spec.js`
-Expected: PASS — 5 passed.
+Expected: PASS — 6 passed.
 
 - [ ] **Step 5: Register the module in Swift** — `YouTubeMusicWebView.swift`, in the `vizScripts` array (currently lines 332-337), add `fs-controls-util` as the FIRST entry so it loads before `visualizer.js`:
 
@@ -665,7 +665,11 @@ Do NOT delete or redeclare the Task-2 `let _barPresetLabel = null;` / `var setBa
 
     function onGlobalFsChange() {
         const fe = document.fullscreenElement || document.webkitFullscreenElement;
-        const want = !fe ? null : (isVizFullscreen() ? 'viz' : 'video');
+        let want = !fe ? null : (isVizFullscreen() ? 'viz' : 'video');
+        // Guard the teardown race: removeFullscreenControl() may exit fullscreen (async) and null
+        // _activeAdapter while _canvasHost still momentarily exists. If the visualizer is no longer
+        // active, never (re)build the viz adapter on a late fullscreenchange.
+        if (want === 'viz' && !_active) want = null;
         if (want === _activeAdapter) return;   // idempotent: ignore no-op re-fires
 
         // Tear down whatever adapter was active.
@@ -813,7 +817,7 @@ git commit -m "Add fullscreen visualizer control bar with idle auto-hide (visual
         const meta = navigator.mediaSession && navigator.mediaSession.metadata;
         const title = meta && meta.title ? meta.title : '';
         const artist = meta && meta.artist ? meta.artist : '';
-        if (title) _barTitle.textContent = artist ? (title + ' — ' + artist) : title;
+        _barTitle.textContent = title ? (artist ? (title + ' — ' + artist) : title) : '';
         const art = meta && meta.artwork && meta.artwork.length ? meta.artwork[meta.artwork.length - 1].src : '';
         if (art) { _barThumb.src = art; _barThumb.style.display = ''; }
         else { _barThumb.removeAttribute('src'); _barThumb.style.display = 'none'; }
@@ -969,10 +973,19 @@ git commit -m "Wire fullscreen bar transport, seek, volume, and metadata to YT p
     function applyVideoReveal(show) {
         document.documentElement.classList.toggle('milkviz-idle', !show);   // cursor:none when hidden
         const el = videoFsChrome();
-        if (el) {
-            el.style.setProperty('opacity', show ? '' : '0', 'important');
-            el.style.setProperty('pointer-events', show ? '' : 'none', 'important');
-            el.style.setProperty('transition', 'opacity .35s ease', 'important');
+        if (!el) return;
+        if (show) {
+            // Restore: clear every inline override we set (leave YT's own styles intact).
+            el.style.removeProperty('opacity');
+            el.style.removeProperty('visibility');
+            el.style.removeProperty('pointer-events');
+            el.style.removeProperty('transition');
+        } else {
+            el.style.setProperty('opacity', '0', 'important');
+            el.style.setProperty('pointer-events', 'none', 'important');
+            // Delay the visibility flip until after the opacity fade (same trick as the viz bar).
+            el.style.setProperty('transition', 'opacity .35s ease, visibility 0s linear .35s', 'important');
+            el.style.setProperty('visibility', 'hidden', 'important');
         }
     }
 ```
@@ -1054,6 +1067,6 @@ git commit -m "Harden fullscreen bar accessibility, reduced-motion, and listener
 - §3 control set (transport + presets) → Tasks 3-4. Bar fullscreen-only → Task 3 Step 6. Windowed preset label to top → Task 2. Preset folded into bar → Task 4 Step 5. Match YT styling → Task 3 Steps 1-2. Idle both surfaces → Tasks 3 (visualizer) + 5 (video). Timeout/threshold/grace → Task 1 defaults. Transport wiring (proxy + video) → Task 4. No pbxproj / one Swift line → Task 1 Steps 5-6.
 - §4.1 idle controller interface (activity/reveal/setLock/destroy, locks, grace) → Task 1. §4.2 adapters + fullscreen detection + webkit prefix + `<html>` root + selector spike → Tasks 3, 5. §4.3 bar structure sibling-of-canvas, active-video resolution, duration guards, buffering omitted, metadata fallbacks → Tasks 3-4. §5 scrim/motion/peek → Task 3. §6 a11y/reduced-motion → Task 6. §7 theme survival → Task 3 Step 1 + Task 5 Step 1. §8 lifecycle/leaks → Tasks 3-6. §9 preset routing → Tasks 2, 4. §10 tests → Task 1 (auto) + manual checklists.
 
-**Type consistency:** `createIdleController` returns `{activity, reveal, setLock, destroy, isVisible}` — used consistently in Tasks 3-5. `pickActiveVideo/formatTime/clampSeek` signatures match Task 1 usages. `setBarPresetLabel`/`_barPresetLabel`/`announcePreset`/`isVizFullscreen` introduced in Task 2, finalized in Task 3, used in Task 4 — single definitions (Task 3 Step 3 deletes the Task 2 stubs).
+**Type consistency:** `createIdleController` returns `{activity, reveal, setLock, destroy, isVisible}` — used consistently in Tasks 3-5. `pickActiveVideo/formatTime/clampSeek` signatures match Task 1 usages. `_barPresetLabel` is declared once (Task 2) and only assigned thereafter; `setBarPresetLabel`, `resolveVideo`, `bindVideo`, `unbindVideo`, `updateBarMeta` are declared once as reassignable `var` stubs (Task 2/Task 3 globals) and REASSIGNED in Task 3/Task 4 — no deletes, no redeclarations, no duplicate-declaration errors.
 
 **Placeholder scan:** none — every step has concrete code or exact commands. `<scheme>` is intentionally resolved by `xcodebuild -list` in Task 1 Step 6 (real projects vary); note it once and reuse.
