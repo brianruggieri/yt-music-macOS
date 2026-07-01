@@ -871,6 +871,7 @@
             _lastTrackTitle = title;
             doLoadPreset(_presetIdx + 1, 2.7);
             scheduleCycle();
+            if (isVizFullscreen()) { bindVideo(resolveVideo()); updateBarMeta(); }
         }
     }
 
@@ -1016,6 +1017,7 @@
     let _bar = null, _barPlayBtn = null, _barVolBtn = null, _barVolSlider = null,
         _barPlayed = null, _barKnob = null, _barTime = null, _barThumb = null, _barTitle = null;
     let _barVolSliding = false;   // true while dragging the volume slider (don't fight its value)
+    let _barVideo = null, _barVideoEvents = null;
 
     // Task 4 fills these in; no-op stubs so Task 3 runs standalone (REASSIGNED, not redeclared).
     var resolveVideo = function () { return null; };
@@ -1074,6 +1076,64 @@
         const exit = mkBtn('milkviz-exit', 'Exit fullscreen', ICON.exitFs);
         exit.addEventListener('click', function (e) { e.stopPropagation(); exitFs(); });
 
+        prev.addEventListener('click', function (e) { e.stopPropagation(); proxyClick('prev'); });
+        next.addEventListener('click', function (e) { e.stopPropagation(); proxyClick('next'); });
+        play.addEventListener('click', function (e) {
+            e.stopPropagation();
+            proxyClick('play', function () {
+                const v = _barVideo || resolveVideo();
+                if (v) { v.paused ? v.play() : v.pause(); }
+            });
+        });
+        vol.addEventListener('click', function (e) {
+            e.stopPropagation();
+            const v = _barVideo || resolveVideo();
+            if (v) { v.muted = !v.muted; }
+        });
+        volSlider.addEventListener('pointerdown', function () { _barVolSliding = true; });
+        volSlider.addEventListener('input', function (e) {
+            e.stopPropagation();
+            const v = _barVideo || resolveVideo();
+            if (!v) return;
+            const val = parseFloat(volSlider.value);
+            v.volume = val; v.muted = val === 0;
+        });
+        const volDone = function () { _barVolSliding = false; };
+        volSlider.addEventListener('pointerup', volDone);
+        volSlider.addEventListener('pointercancel', volDone);
+        volSlider.addEventListener('blur', volDone);
+        pPrev.addEventListener('click', function (e) { e.stopPropagation(); doLoadPreset(_presetIdx - 1, 2.7); scheduleCycle(); });
+        pNext.addEventListener('click', function (e) { e.stopPropagation(); doLoadPreset(_presetIdx + 1, 2.7); scheduleCycle(); });
+
+        // Hide prev/next if YT's buttons aren't present (never leave a dead control).
+        if (!ytBtn('prev')) prev.style.display = 'none';
+        if (!ytBtn('next')) next.style.display = 'none';
+
+        // Seek: click-to-seek and drag-to-scrub via clampSeek on the active video.
+        const seekTo = function (clientX) {
+            const v = _barVideo || resolveVideo();
+            if (!v) return;
+            const r = seek.getBoundingClientRect();
+            const frac = Math.max(0, Math.min(1, (clientX - r.left) / r.width));
+            const t = window.MilkVizCtl.clampSeek(frac * v.duration, v.duration);
+            if (t !== null) { v.currentTime = t; updateBarTransport(); }
+        };
+        seek.addEventListener('pointerdown', function (e) {
+            e.stopPropagation();
+            if (_idle) _idle.setLock('scrub', true);
+            seekTo(e.clientX);
+            const move = function (ev) { seekTo(ev.clientX); };
+            const up = function () {
+                document.removeEventListener('pointermove', move);
+                document.removeEventListener('pointerup', up);
+                document.removeEventListener('pointercancel', up);
+                if (_idle) _idle.setLock('scrub', false);
+            };
+            document.addEventListener('pointermove', move);
+            document.addEventListener('pointerup', up);
+            document.addEventListener('pointercancel', up);
+        });
+
         row.appendChild(prev); row.appendChild(play); row.appendChild(next);
         row.appendChild(time); row.appendChild(meta); row.appendChild(volWrap);
         row.appendChild(preset); row.appendChild(exit);
@@ -1093,6 +1153,94 @@
         _barKnob = bar.querySelector('#milkviz-seek-knob');
         _barTime = time; _barThumb = thumb; _barTitle = title;
         _barPresetLabel = pName;
+    }
+
+    // Task 4: wire active-video resolution + binding.
+    resolveVideo = function () {
+        return window.MilkVizCtl.pickActiveVideo(document.querySelectorAll('video'));
+    };
+
+    bindVideo = function (v) {
+        if (v === _barVideo) return;
+        unbindVideo();
+        _barVideo = v;
+        if (!v) return;
+        const onTime = function () { updateBarTransport(); };
+        const onState = function () { updateBarTransport(); };
+        v.addEventListener('timeupdate', onTime);
+        v.addEventListener('play', onState);
+        v.addEventListener('pause', onState);
+        v.addEventListener('volumechange', onState);
+        _barVideoEvents = { onTime, onState };
+        updateBarTransport();
+    };
+
+    unbindVideo = function () {
+        if (_barVideo && _barVideoEvents) {
+            _barVideo.removeEventListener('timeupdate', _barVideoEvents.onTime);
+            _barVideo.removeEventListener('play', _barVideoEvents.onState);
+            _barVideo.removeEventListener('pause', _barVideoEvents.onState);
+            _barVideo.removeEventListener('volumechange', _barVideoEvents.onState);
+        }
+        _barVideo = null; _barVideoEvents = null;
+    };
+
+    // New in Task 4 (not stubbed) — plain declaration is fine.
+    function updateBarTransport() {
+        if (!_bar) return;
+        const v = _barVideo;
+        const fmt = window.MilkVizCtl.formatTime;
+        if (v && isFinite(v.duration) && v.duration > 0) {
+            const pct = Math.max(0, Math.min(1, v.currentTime / v.duration)) * 100;
+            _barPlayed.style.width = pct + '%';
+            _barKnob.style.left = pct + '%';
+            _barTime.textContent = fmt(v.currentTime) + ' / ' + fmt(v.duration);
+        } else {
+            _barPlayed.style.width = '0%'; _barKnob.style.left = '0%';
+            _barTime.textContent = '0:00 / 0:00';
+        }
+        const paused = !v || v.paused;
+        _barPlayBtn.innerHTML = paused ? ICON.play : ICON.pause;
+        _barPlayBtn.setAttribute('aria-label', paused ? 'Play' : 'Pause');
+        _barPlayBtn.setAttribute('aria-pressed', paused ? 'false' : 'true');
+        _barPlayBtn.title = paused ? 'Play' : 'Pause';
+        const muted = !!(v && v.muted);
+        _barVolBtn.innerHTML = muted ? ICON.volMute : ICON.vol;
+        _barVolBtn.setAttribute('aria-label', muted ? 'Unmute' : 'Mute');
+        _barVolBtn.setAttribute('aria-pressed', muted ? 'true' : 'false');
+        if (_barVolSlider && v && !_barVolSliding) _barVolSlider.value = String(v.muted ? 0 : v.volume);
+    }
+
+    // REASSIGN the Task 3 Step 6b stub (do not redeclare).
+    updateBarMeta = function () {
+        if (!_bar) return;
+        const meta = navigator.mediaSession && navigator.mediaSession.metadata;
+        const title = meta && meta.title ? meta.title : '';
+        const artist = meta && meta.artist ? meta.artist : '';
+        _barTitle.textContent = title ? (artist ? (title + ' — ' + artist) : title) : '';
+        const art = meta && meta.artwork && meta.artwork.length ? meta.artwork[meta.artwork.length - 1].src : '';
+        if (art) { _barThumb.src = art; _barThumb.style.display = ''; }
+        else { _barThumb.removeAttribute('src'); _barThumb.style.display = 'none'; }
+    };
+
+    // Best-effort: YT Music's player-bar transport controls. Selectors are confirmed in QA
+    // (headless DOM inspection isn't possible — see the file's segment-detection note).
+    function ytBtn(kind) {
+        const bar = document.querySelector('ytmusic-player-bar');
+        if (!bar) return null;
+        const map = {
+            play: '#play-pause-button',
+            prev: 'tp-yt-paper-icon-button.previous-button, .previous-button',
+            next: 'tp-yt-paper-icon-button.next-button, .next-button',
+        };
+        return bar.querySelector(map[kind]);
+    }
+
+    function proxyClick(kind, videoFallback) {
+        const b = ytBtn(kind);
+        if (b) { b.click(); return true; }
+        if (videoFallback) videoFallback();
+        return false;
     }
 
     // Real implementation — REASSIGN the Task 2 var (do not redeclare; `_barPresetLabel`
@@ -1254,6 +1402,7 @@
             _fsChangeHandler = null;
         }
         stopIdle();
+        unbindVideo();
         if (_bar) { _bar.remove(); _bar = null; _barPresetLabel = null; }
         document.documentElement.classList.remove('milkviz-idle');   // belt-and-braces (video adapter)
         _activeAdapter = null;   // reset the global handler's state so a later fs re-fires cleanly
