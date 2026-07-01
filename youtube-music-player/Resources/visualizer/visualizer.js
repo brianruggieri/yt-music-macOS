@@ -1260,6 +1260,44 @@
         if (_canvasHost) _canvasHost.style.cursor = show ? 'auto' : 'none';
     }
 
+    // Video-fullscreen idle helpers (Task 5).
+    function injectVideoIdleCss() {
+        if (document.getElementById('milkviz-video-idle-css')) return;
+        const css = document.createElement('style');
+        css.id = 'milkviz-video-idle-css';
+        css.textContent = 'html.milkviz-idle, html.milkviz-idle *{cursor:none !important;}';
+        document.head.appendChild(css);
+    }
+
+    // YT's native video-fullscreen chrome. Selector list confirmed/extended by the Step 0 spike.
+    function videoFsChrome() {
+        const sels = ['ytmusic-player-bar', '.ytp-chrome-bottom', '.ytmusic-player-bar'];
+        for (let i = 0; i < sels.length; i++) {
+            const el = document.querySelector(sels[i]);
+            if (el) return el;
+        }
+        return null;
+    }
+
+    function applyVideoReveal(show) {
+        document.documentElement.classList.toggle('milkviz-idle', !show);   // cursor:none when hidden
+        const el = videoFsChrome();
+        if (!el) return;
+        if (show) {
+            // Restore: clear every inline override we set (leave YT's own styles intact).
+            el.style.removeProperty('opacity');
+            el.style.removeProperty('visibility');
+            el.style.removeProperty('pointer-events');
+            el.style.removeProperty('transition');
+        } else {
+            el.style.setProperty('opacity', '0', 'important');
+            el.style.setProperty('pointer-events', 'none', 'important');
+            // Delay the visibility flip until after the opacity fade (same trick as the viz bar).
+            el.style.setProperty('transition', 'opacity .35s ease, visibility 0s linear .35s', 'important');
+            el.style.setProperty('visibility', 'hidden', 'important');
+        }
+    }
+
     // Peek zone: bottom 15% of the host counts as activity even before reaching the bar.
     function inPeekZone(e) {
         if (!_canvasHost) return false;
@@ -1470,7 +1508,7 @@
             if (_bar) { _bar.remove(); _bar = null; _barPresetLabel = null; }
         } else if (_activeAdapter === 'video') {
             stopIdle();
-            document.documentElement.classList.remove('milkviz-idle');
+            applyVideoReveal(true);   // clears the inline hide + the cursor class
         }
         _activeAdapter = want;
 
@@ -1483,7 +1521,11 @@
             updateBarMeta();
             if (_presetNames.length) setBarPresetLabel(_presetNames[_presetIdx]);
         }
-        // want === 'video' branch is added in Task 5.
+        else if (want === 'video') {
+            injectVideoIdleCss();
+            startIdle(function () { applyVideoReveal(true); },
+                      function () { applyVideoReveal(false); });
+        }
     }
 
     function bindGlobalFs() {
