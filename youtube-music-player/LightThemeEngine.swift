@@ -443,7 +443,9 @@ enum LightThemeEngine {
 
         // Prefix each comma-separated part of a selector with our mode scope,
         // respecting parens so :is()/:where() lists aren't split mid-group.
-        function scope(sel) {
+        // Split a selector list on TOP-LEVEL commas only (parens preserved so :is()/:where()
+        // groups aren't split mid-list). Shared by scope() and the av-toggle ownership filter.
+        function splitSelectorParts(sel) {
             const parts = []; let depth = 0, cur = '';
             for (const ch of sel) {
                 if (ch === '(') depth++;
@@ -451,7 +453,10 @@ enum LightThemeEngine {
                 if (ch === ',' && depth === 0) { parts.push(cur); cur = ''; } else cur += ch;
             }
             if (cur.trim()) parts.push(cur);
-            return parts.map(p => {
+            return parts;
+        }
+        function scope(sel) {
+            return splitSelectorParts(sel).map(p => {
                 p = p.trim();
                 // A part rooted at <html> (e.g. "html", "html, body") must MERGE the mode
                 // attribute onto html, not become a descendant of it (html has no html
@@ -493,14 +498,6 @@ enum LightThemeEngine {
                         if (toRGB(val) || (hasGradient(val) && hasColor(val))) tokens[prop] = val;
                     }
                     if (!rule.selectorText) continue;
-                    // OWNERSHIP BOUNDARY: the Song/Video/Visualizer toggle is fully owned by
-                    // the visualizer once injected. Don't invert YT's av-toggle highlight
-                    // literals — its selected-segment fill is rgba(255,255,255,.1), which this
-                    // scanner would flip to a dark translucent pill, re-emit scoped+!important
-                    // at (0,4,2), and paint on whatever YT marks selected (playback-mode stays
-                    // on Song/Video even while the overlay is active) — fighting the visualizer's
-                    // own .milkviz-sel selection. The visualizer styles this control in both themes.
-                    if (/av-toggle|song-button|video-button/.test(rule.selectorText)) continue;
                     const decls = [];
                     for (const prop of rule.style) {
                         const v = rule.style.getPropertyValue(prop).trim();
@@ -543,7 +540,18 @@ enum LightThemeEngine {
                         }
                     }
                     if (decls.length) {
-                        const k = scope(rule.selectorText);
+                        // OWNERSHIP BOUNDARY: the Song/Video/Visualizer toggle is fully owned by
+                        // the visualizer once injected, so don't invert YT's av-toggle highlight
+                        // literals — its selected-segment fill is rgba(255,255,255,.1), which this
+                        // scanner would flip to a dark pill and re-emit scoped+!important at (0,4,2),
+                        // painting whatever YT marks selected (playback-mode stays on Song/Video even
+                        // while the overlay is active) and fighting the visualizer's own .milkviz-sel.
+                        // Drop only the av-toggle PARTS so unrelated selectors grouped in the same
+                        // rule still get their inversion emitted.
+                        const kept = splitSelectorParts(rule.selectorText)
+                            .filter(function (p) { return !/av-toggle|song-button|video-button/.test(p); });
+                        if (!kept.length) continue;
+                        const k = scope(kept.join(','));
                         selFixes[k] = (selFixes[k] || []).concat(decls);
                     }
                 }

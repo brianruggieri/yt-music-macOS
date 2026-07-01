@@ -1035,7 +1035,16 @@
         const layout = document.querySelector('ytmusic-app-layout');
         const page = document.querySelector('ytmusic-player-page');
         if (!layout && !page) { setTimeout(watchPlayerPageClose, 500); return; }
-        const check = function () { if (_active && !isPlayerPageOpen()) MilkViz.setActive(false); };
+        let reCheck = null;
+        const check = function () {
+            if (!_active) return;
+            if (!isPlayerPageOpen()) { MilkViz.setActive(false); return; }
+            // YT can drop the open attribute at the START of the collapse animation while
+            // the page is still geometrically on-screen; no further mutation is guaranteed
+            // once the CSS transform finishes, so re-check after it settles to catch it.
+            clearTimeout(reCheck);
+            reCheck = setTimeout(function () { if (_active && !isPlayerPageOpen()) MilkViz.setActive(false); }, 350);
+        };
         const obs = new MutationObserver(check);
         if (layout) obs.observe(layout, { attributes: true });
         if (page) obs.observe(page, { attributes: true });
