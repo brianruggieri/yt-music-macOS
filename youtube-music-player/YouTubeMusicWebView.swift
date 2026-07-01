@@ -350,6 +350,11 @@ struct YouTubeMusicWebView: NSViewRepresentable {
         webView.uiDelegate = context.coordinator
         webView.customUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15"
         webView.setValue(false, forKey: "drawsBackground")
+        // Debug-only: lets Safari's Develop menu attach to the WKWebView for DOM inspection.
+        // Never enabled in Release so shipped builds aren't remotely inspectable.
+        #if DEBUG
+        if #available(macOS 13.3, *) { webView.isInspectable = true }
+        #endif
         webView.appearance = mode.appearance   // force light/dark; nil = follow system
 
         viewModel.webView = webView
