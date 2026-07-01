@@ -998,13 +998,17 @@
             '#milkviz-thumb{width:40px;height:40px;border-radius:4px;object-fit:cover;flex:none;}',
             '#milkviz-title{font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}',
             // Volume: slider collapsed to 0 width, expands on hover/focus (YT-style).
+            // Volume slider holds a CONSTANT 72px width (space reserved) and only fades — animating
+            // width would reflow every sibling to its right on each hover (the "jumping around").
             '#milkviz-vol-wrap{display:flex;align-items:center;gap:6px;flex:none;}',
-            '#milkviz-vol-slider{width:0;opacity:0;height:4px;accent-color:#fff;cursor:pointer;',
-            'transition:width .18s ease, opacity .18s ease;}',
-            '#milkviz-vol-wrap:hover #milkviz-vol-slider,#milkviz-vol-slider:focus-visible{width:72px;opacity:1;}',
+            '#milkviz-vol-slider{width:72px;opacity:0;pointer-events:none;height:4px;accent-color:#fff;',
+            'cursor:pointer;transition:opacity .18s ease;}',
+            '#milkviz-vol-wrap:hover #milkviz-vol-slider,#milkviz-vol-slider:focus-visible{opacity:1;pointer-events:auto;}',
+            // Preset name has a FIXED width so the ◀ ▶ arrows stay put regardless of name length
+            // (short names center, long names ellipsize) — no more growing/shrinking cluster.
             '#milkviz-preset{display:flex;align-items:center;gap:6px;flex:none;}',
-            '#milkviz-preset-name{font-size:12px;max-width:160px;overflow:hidden;text-overflow:ellipsis;',
-            'white-space:nowrap;opacity:.85;}',
+            '#milkviz-preset-name{font-size:12px;width:150px;text-align:center;overflow:hidden;',
+            'text-overflow:ellipsis;white-space:nowrap;opacity:.85;}',
             // Reduced motion: kill duration AND the visibility delay (else the bar strands
             // visible for 350ms), drop the slide. Hide behavior itself is preserved.
             '@media (prefers-reduced-motion: reduce){#milkviz-bar{transition-duration:.01ms;transition-delay:0s;transform:none;}',
